@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PS4RT
+Comment=Linux PS4 compatibility runtime (bring your own game files)
+Exec=AppRun
+Icon=ps4rt
+Categories=Game;
+Terminal=false
+StartupWMClass=ps4rt
