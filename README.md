@@ -1,4 +1,4 @@
-# Valkyria Revolution — PS4RT for Linux
+# Valkyria Revolution — PS4RT for PC Linux Port
 
 An experimental, game-specific Linux compatibility runtime for **Valkyria Revolution**
 (PlayStation 4, **CUSA06810**), currently tested on **Fedora 44, x86-64**.
