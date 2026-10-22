@@ -58,6 +58,8 @@ unverified. glibc compatibility alone does not guarantee every distro works.
 See [Running on Linux](docs/RUNNING_LINUX.md) for controls and game-file setup;
 the archive never includes the PS4 game or firmware.
 
+**Architecture support:** The prebuilt runtime targets **native x86-64 (AMD64) CPUs only**. ARM64 devices, including Snapdragon-based handhelds using FEX or Box64, are **unsupported and untested**. An x86-to-ARM translation layer might launch the program, but stable gameplay is not guaranteed, even on an otherwise compatible Linux distribution.
+
 ## Current status
 
 **Experimental, playable in the tested opening sections; not a verified full

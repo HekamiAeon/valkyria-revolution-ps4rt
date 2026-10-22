@@ -74,6 +74,8 @@ This is source-v07, not AMD FSR 4.1.1. Unsupported Vulkan GPU features or
 initialization failures fall back to FSR 3.1 with a menu message.
 There is no automatic network access when launching the game.
 
+**CPU architecture:** This release is for **native x86-64/AMD64** Linux systems. **ARM64 is unsupported**, including devices using FEX, Box64, or other x86-to-ARM execution translators. Reaching startup or a logo through translation does not validate gameplay stability. The Linux distribution and the CPU execution architecture are separate compatibility requirements.
+
 ## Building from source is for developers
 
 A conventional host-native build still works when the developer installs the
