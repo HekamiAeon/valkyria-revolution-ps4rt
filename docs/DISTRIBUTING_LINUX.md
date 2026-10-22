@@ -1,15 +1,14 @@
-# Valkyria Revolution: Linux distribution guide
+# Valkyria Revolution — Linux distribution guide
 
-This experimental native Linux runtime executes code from a player's own
-extracted, plaintext **CUSA06810** game. No game is included. The port is based
-on earlier compatibility-runtime and shadPS4 code; original copyright and GPL notices remain.
+This document explains how to build and distribute the **Valkyria Revolution PS4RT** Linux source release for **CUSA06810**. It is an experimental, game-specific native x86-64 compatibility runtime, adapted from earlier PS4RT projects and the shadPS4 rendering foundation. Original copyright, GPL, and third-party license notices must remain intact.
+
+**This repository contains the runtime and its licensed dependencies, not the game, its firmware, or decryption tools.** Each player supplies an independently obtained, extracted, plaintext copy of the game.
 
 ## For players: download, extract, run
 
-**You do not need to compile PS4RT to play.** Get the runtime archive
-**`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`** from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest), not the
-`valkyria-revolution-source-35f35f5.tar.gz` developer archive.
-v1.0 is preserved for reference but superseded by v1.1.
+**Do not compile from source to play v1.1.** Download the Linux runtime archive from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest). Choose `valkyria-revolution-linux-x86_64-35f35f5.tar.gz`, not the source archive.
+
+Extract the download and open a terminal in the extracted folder:
 
 ```bash
 tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
@@ -17,152 +16,77 @@ cd valkyria-revolution-linux-x86_64-35f35f5
 bash Play-Valkyria.sh --game "/path/to/CUSA06810"
 ```
 
-The twelve bundled application libraries load automatically with relative
-`$ORIGIN` paths; no `LD_LIBRARY_PATH` or source compilation is needed.
+Replace `/path/to/CUSA06810` with the path to **your extracted plaintext game folder**. It must contain `sce_sys/param.sfo`, `eboot.bin`, `sce_module/`, and game data. Do not supply the PKG, an executable file, or the parent folder.
 
-Supply **the extracted CUSA06810 folder**, not the PKG, parent folder or
-`eboot.bin` itself. Keep the release files together and writable.
+**You do not need FFmpeg/SDL3 installation commands or `LD_LIBRARY_PATH`.** The application libraries are bundled. The player still needs glibc 2.35+, Python 3, a compatible Vulkan graphics/display stack, and x86-64 Linux.
 
-`Play-Valkyria.sh` without arguments opens a folder chooser when Python's Tk
-module is installed, then remembers the selected folder. File managers that
-support running executable scripts can launch it directly. The extracted
-folder must include `eboot.bin`, `sce_sys/param.sfo`, the bundled system modules,
-and the game's data directories. The preparer accepts plaintext PS4 SELF files;
-it does not decrypt encrypted packages or download a game or firmware.
+**CPU architecture:** The release supports native **x86-64/AMD64** execution. **ARM64 is unsupported**, including ARM Linux systems using FEX, Box64, or similar translation layers. A translator may partially launch the executable, but this does not establish reliable PS4RT gameplay. The system's Linux distribution alone does not determine CPU compatibility.
 
-**Linux x86-64, glibc 2.35 or later. Gameplay-tested on Fedora.**
+**FSR and resolution launch arguments are optional.** Hold **L2** and **click R3 (the right stick)**, or press **Insert**, to choose resolution and upscaling in the graphics settings menu. **AF changes require a restart**; the other graphics options apply live. See [Running on Linux](RUNNING_LINUX.md) and the [Linux binary release guide](LINUX_BINARY_RELEASE.md) for details.
 
-The portable runtime needs Python 3, glibc 2.35+, a compatible Vulkan loader
-and graphics driver, plus the host's display/audio integration libraries.
-The archive **bundles twelve application shared libraries** in `lib/`,
-including SDL3, FFmpeg 8.0.3, fmt, xxHash, Zydis, zlib, libstdc++, and
-libgcc_s. ELF RUNPATHs resolve them relative to the executable, with no
-`LD_LIBRARY_PATH` setup or distro-specific installation of those libraries.
+### Building from source is for developers
 
-System glibc, the Vulkan driver/loader, and system display/audio libraries
-remain external. Another Linux distribution may work, but compatibility has
-not been established by testing on SteamOS, Mint, or other distributions.
-The glibc baseline is a necessary compatibility check, not a universal Linux
-guarantee. This is a tar.gz runtime, **not an AppImage**.
-
-Local prepared code, settings and saves go in
-`${XDG_DATA_HOME:-~/.local/share}/valkyria-revolution/`.
-`--data-dir /some/private/folder` overrides this location. A source checkout
-defaults to its existing `out/valkyria/` directory, preserving development saves.
-Game input files are only read. The generated `boot*.bin` and linked module
-code are still game content: never distribute this private data directory.
-
-Press **Insert**, or hold **L2** and click **R3**, to open the port's menu.
-The enlarged translucent wine-red menu can display an optional locally supplied
-portrait *inside* its panel, with optional WAV navigation/confirm/cancel cues.
-Missing media falls back gracefully. See `packaging/linux/README.md` in the
-source archive for exact asset filenames and release packaging behavior.
-The single graphics panel offers Windowed / Borderless / Fullscreen mode; 1080p, 1440p, and 4K output; Off/Original,
-FSR 3.1, and FSR 4 v07; anisotropic filtering (Game default / 2× / 4× /
-8× / 16×); and sharpening. AF improves angled texture clarity independently
-of FSR's anti-aliasing and requires a game restart. Other image changes apply
-live. Choices save when the menu closes. The scene
-still renders at 1920x1080: 1080p output uses Native AA, 1440p a custom 1.33x ratio,
-and 4K Performance scaling. The original game's frame rate is unchanged.
-Use the D-pad to navigate, Cross to select, and Circle to back out (A/B on
-Xbox controllers).
-This overlay is independent of the game's own menu system. Choose **Exit Game**
-and confirm **Exit to desktop** for the normal host window-close behavior.
-The confirmation warns about unsaved progress; exiting preserves PS4RT graphics
-settings but does not automatically save the game.
-
-FSR 3.1 is built in and is the fresh-config default. The 189 checksum-verified
-FSR 4 v07 files are bundled in `fsr4_shaders/`, including the MIT notice;
-`packaging/fsr4-v07-assets.json` pins their exact size and SHA-256 hashes.
-1080p output uses the 1080 tier, while 1440p and 4K output use the 2160 tier.
-This is source-v07, not AMD FSR 4.1.1. Unsupported Vulkan GPU features or
-initialization failures fall back to FSR 3.1 with a menu message.
-There is no automatic network access when launching the game.
-
-**CPU architecture:** This release is for **native x86-64/AMD64** Linux systems. **ARM64 is unsupported**, including devices using FEX, Box64, or other x86-to-ARM execution translators. Reaching startup or a logo through translation does not validate gameplay stability. The Linux distribution and the CPU execution architecture are separate compatibility requirements.
-
-## Building from source is for developers
-
-A conventional host-native build still works when the developer installs the
-Vulkan, SDL3, FFmpeg, fmt, Boost, xxhash, robin-map, VMA, Zydis, glslang,
-X11 and compiler/CMake/Ninja development dependencies:
+For a conventional host-native source build, install a compiler, CMake, Ninja, pkg-config, Python 3, Vulkan development packages and SDL3, FFmpeg, fmt, Boost, xxhash, robin-map, VMA, Zydis, glslang and X11 development dependencies, then from the repository root:
 
 ```bash
 PS4RT_LTO=OFF bash build.sh --test
 python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810"
 ```
 
-These binaries use the developer's host libraries. They are **not** the
-audited portable release. Use the standardized Ubuntu 22.04 builder
-described below for distribution; players do not need Podman.
+This host-native build links against the **developer's** installed libraries and does not itself produce the standardized release bundle. For a distribution-targeted build, use the automated Ubuntu 22.04/glibc 2.35 pipeline described in [`packaging/linux/README.md`](../packaging/linux/README.md). That container workflow builds the bundled release, and is **not** required by players.
+
+### Graphics, controls, and gameplay status
+
+Open the illustrated wine-red in-game menu with **Insert**, or press **L2 + R3 click**. Navigate with D-pad, Cross, and Circle (A/B for typical Xbox-style controllers).
+
+The compact menu offers **Windowed / Borderless / Fullscreen** display modes; 1080p, 1440p, or 4K output; Off / Original, FSR 3.1, or FSR 4 v07; sharpening; and anisotropic filtering (Game default / 2× / 4× / 8× / 16×). **AF requires a restart**; window mode, resolution, upscaling, and sharpening apply live. Valkyria does **not** include a Sync/Async shader compilation toggle.
+
+The game retains its original frame-rate behavior. Display reconstruction to 4K does not mean the original 1080p scene is natively rasterized at 4K. The in-game overlay uses an illustrated portrait within a translucent wine-red panel, with recorded menu sounds in v1.1.
+
+The FSR 3.1 implementation and the bundled, checksum-recorded **FSR 4 v07** resources are part of the source distribution. The `fsr4_shaders/` assets, their license notice, and `packaging/fsr4-v07-assets.json` **must remain with a release that supports FSR 4**. FSR 4 requires suitable Vulkan device capabilities and falls back to FSR 3.1 if unsupported. This release is not FSR 4.1.1.
+
+Gameplay testing reached the **opening three chapters** on Fedora, including cinematics, audio, exploration, combat, and initial saving/loading. Development testing included Ryzen 7 9700X / GeForce RTX 3080 Ti, with the portable Linux release smoke-tested on AMD-based Fedora hardware. The full game and additional Linux hosts have not been exhaustively tested.
+
+### User data and privacy
+
+Source builds generate output under `out/valkyria/`. The packaged release instead uses `${XDG_DATA_HOME:-~/.local/share}/valkyria-revolution/` by default. The optional `--data-dir /custom/path` flag overrides either default.
+
+| Path | Contains |
+| --- | --- |
+| `out/valkyria/boot-linked.bin`, `boot.bin` and similar files | Prepared or linked, game-derived binary data |
+| `out/valkyria/valkyria.ini` | Saved graphics settings for source builds |
+| `out/valkyria/user/savedata/` | Player saves for source builds |
+| `out/valkyria/user/gpu/` | Generated shader and graphics caches |
+
+These files are **local and private**. Do not distribute `out/` contents, the packaged user-data directory, PS4 system modules, firmware, screenshots or captures from user directories by accident. The game's original input folder is read rather than copied into the repository. The packaged player launcher can remember the chosen game directory; `--data-dir` controls where private working data is stored.
+
+To exit, choose **Exit Game** in the overlay and confirm **Exit to desktop**. Save in-game first; changing graphics settings does not save gameplay progress.
 
 ## Maintainer instructions
 
 ### Source and Linux runtime packages
 
-Build the portable runtime from a clean committed source checkout using the
-existing `localhost/ps4rt-builder:linux` Podman image. Build the image once
-with `packaging/linux/build-images.sh` if it is missing. The builder prints
-the exact absolute `BUNDLE=` path. After a gameplay check of that bundle,
-the exporter uses those audited binaries instead of any local Fedora build:
+From the repository root, after committing source changes, run `bash packaging/linux/build-images.sh` once to create the build image if needed. Then run `bash packaging/linux/build-runtime.sh`; it prints the resulting bundle path. Package that bundle with:
 
-```bash
-bash packaging/linux/build-runtime.sh
-BUNDLE="/absolute/path/from/preceding/BUNDLE/output"
-python3 tools/package_valkyria.py --preview > out/source-preview.json
+~~~bash
+BUNDLE="/absolute/path/printed/by/build-runtime.sh"
 python3 tools/package_valkyria.py
-python3 tools/package_valkyria.py --runtime --bundle-from "$BUNDLE" --preview > out/runtime-preview.json
 python3 tools/package_valkyria.py --runtime --bundle-from "$BUNDLE"
 (cd out/community && sha256sum -c *.sha256)
-```
+~~~
 
-The exporter refuses dirty working trees. It checks the bundled library
-allowlist, relative paths, glibc baseline, and library resolution before
-building the archive. Extract and gameplay-test the **actual release archive**
-before publishing. For developer details, see `packaging/linux/README.md`.
+The source and Linux x86-64 archives keep the original filenames and commit suffix. Runtime packaging uses an allowlist of **three tested ELF files** (`bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, and `bin/ps4rt-gpu-capabilities`) and twelve audited shared libraries from the tested build. The exporter includes corresponding PS4RT source under `source/`, plus reviewed overlay media bundled separately from the committed source. It excludes game files, linked game code, saves and GPU caches.
 
-Archives and SHA256 files appear in `out/community/`. The source export contains
-tracked files under an explicit set of source directories, including vendored
-dependencies, their licenses, build scripts, tests and engineering changes.
-The runtime export contains that source under `source/`, three explicitly
-named Linux ELF binaries (`bin/ps4rt`, `bin/ps4rt-gpu-capabilities`,
-`bin/gpu/libps4rtgpu.so`), twelve allowlisted application shared
-libraries in `lib/`, four preparation helpers, the launcher, optional asset
-fetch scripts, the 189 bundled FSR 4 v07 assets and notice, this
-document and GPL text. `MANIFEST.json` records the revision and SHA256 of
-each payload file. Build the binaries from that same source checkpoint.
-The package is a local candidate; creating it does not publish or upload it.
+See [`packaging/linux/README.md`](../packaging/linux/README.md) for build stages, `$ORIGIN` path validation and glibc requirements. Before future public binary redistribution, complete the third-party [license/source review](../packaging/linux/THIRD_PARTY_REVIEW.md) and verify redistribution rights for the included overlay portrait and sounds. Independent Steam Deck testing is still pending.
 
-The exporter does **not** copy directories from `out/`, originals, saves,
-screenshots, shader/pipeline caches, prepared executables, PS4 modules, FSR 4.1.1
-DLLs or models. Inherited launcher artwork/font with unreviewed provenance
-is excluded from the source export. The v1.1 runtime includes the locally
-supplied overlay artwork and recorded audio. Their rights/provenance require
-a separate review; they are not part of the committed source export.
-Do not share an arbitrary ZIP of this workspace, its Git metadata/history, or
-the development checkpoints folder instead of the reviewed export.
+### License and provenance
 
-Retain matching source and required third-party notices with a binary release.
-The port's source retains its GPL-2.0-or-later notices. The Ubuntu builder now
-ships twelve shared libraries, including a source-built FFmpeg 8.0.3 with
-PNG/zlib support; these are **not** copies of the former Fedora library set.
-Audit the precise FFmpeg configuration, component licenses, copyright notices,
-and corresponding source/source offers as applicable **before publication**.
-The source archive contains vendored upstream notices for FSR-Vulkan/AMD
-FidelityFX, ImGui, LibAtrac9, Sirit, half, xbyak, miniz, magic_enum,
-AMD register headers, and DejaVu fonts. Review other bundled libraries
-separately. See `packaging/linux/THIRD_PARTY_REVIEW.md` in the source export.
+PS4RT is **adapted open-source software**, not a clean-room implementation. Retain the credits and original copyright notices for the God of War III and Bloodborne native-port lineage, the shadPS4 renderer, and all vendored components, as recorded in [Upstream credits and notices](UPSTREAM_CREDITS.md).
 
-Primary license references: [GNU GPLv2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-and [FFmpeg's distribution guidance](https://ffmpeg.org/legal.html).
-A game-content-free export is an engineering boundary, not a guarantee about every
-jurisdiction's copyright, circumvention or trademark rules. This document does
-not grant permission to distribute Sega/Sony game content or use their branding.
+The runtime source is distributed under **GPL-2.0-or-later**; third-party code and data keep their individual terms. Relevant dependencies include FidelityFX/FSR-Vulkan, ImGui, LibAtrac9, Sirit, half, xbyak, miniz, magic_enum, DejaVu fonts, and others bundled in the source.
 
-Before a public release: test the extracted candidate on the declared target,
-verify the checksums/file list, provide its matching source archive and attribution,
-and describe the actual tested gameplay coverage and known limitations.
-**Maintainer follow-up:** v1.1 is already public. Complete any outstanding
-bundled-library notices/corresponding-source and overlay-media redistribution
-reviews. Technical release validation does not establish rights compliance.
-Review these obligations before any future binary releases.
+FFmpeg licensing obligations depend on the **specific build and linking configuration**. When distributing host binaries or bundled system libraries, inspect the actual FFmpeg build flags, applicable license version, and any corresponding-source obligations. Do not blindly copy system library directories into a tarball. See [FFmpeg legal guidance](https://ffmpeg.org/legal.html) and the [GNU GPL license information](https://www.gnu.org/licenses/).
+
+Review the rights and attribution for the illustrated overlay, bundled menu audio and gameplay screenshot separately before public redistribution. A game-content-free runtime source export does not itself grant permission to redistribute Sega or Sony game media, or claim affiliation.
+
+Before announcing a public binary release, perform a final clean-tree audit, test the exact distributed files, verify checksums and dependencies, and publish matching source and license notices. Publication is a separate release decision.
