@@ -33,8 +33,8 @@ def main(argv=None):
     args, runtime_args = parser.parse_known_args(argv)
     if runtime_args and runtime_args[0] == '--':
         runtime_args.pop(0)
-    packaged = (ROOT / 'bin/ps4rt-probe').is_file()
-    binary = ROOT / ('bin/ps4rt-probe' if packaged else 'out/ps4rt-probe')
+    packaged = (ROOT / 'bin/ps4rt').is_file()
+    binary = ROOT / ('bin/ps4rt' if packaged else 'out/ps4rt')
     default_data = (Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) /
                     'valkyria-revolution') if packaged else ROOT / 'out/valkyria'
     data = (args.data_dir or Path(os.environ.get('VALKYRIA_DATA_DIR', default_data))).expanduser().resolve()

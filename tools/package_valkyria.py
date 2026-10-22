@@ -9,6 +9,8 @@ import argparse
 import hashlib
 import io
 import json
+import os
+import re
 from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
@@ -34,8 +36,9 @@ SYNTHETIC_FIXTURES = {
 GAME_CONTAINER_PREFIXES = (b'PS4RTB', b'PS4RTP', b'PS4RTC', b'PS4RTI', b'O\x15=\x1d')
 RUNTIME = {
     'Play-Valkyria.sh': 'packaging/linux/Play-Valkyria.sh',
-    'bin/ps4rt-probe': 'out/ps4rt-probe',
-    'bin/gpu/libps4rtgpu.so': 'out/gpu/libps4rtgpu.so',
+    'bin/ps4rt': 'bin/ps4rt',
+    'bin/ps4rt-gpu-capabilities': 'bin/ps4rt-gpu-capabilities',
+    'bin/gpu/libps4rtgpu.so': 'bin/gpu/libps4rtgpu.so',
     'scripts/valkyria_launch.py': 'scripts/valkyria_launch.py',
     'scripts/prepare.py': 'scripts/prepare.py',
     'scripts/link_modules.py': 'scripts/link_modules.py',
@@ -51,6 +54,54 @@ RUNTIME = {
     'CREDITS.md': 'docs/UPSTREAM_CREDITS.md',
     'README.md': 'docs/DISTRIBUTING_LINUX.md',
 }
+
+
+LINUX_LIBRARIES = (
+    'libavcodec.so.62', 'libavformat.so.62', 'libavutil.so.60',
+    'libfmt.so.11', 'libgcc_s.so.1', 'libSDL3.so.0',
+    'libstdc++.so.6', 'libswresample.so.6', 'libswscale.so.9',
+    'libxxhash.so.0', 'libz.so.1', 'libZydis.so.5.0',
+)
+EXPECTED_RUNPATH = {
+    'bin/ps4rt': '$ORIGIN/../lib:$ORIGIN/gpu',
+    'bin/gpu/libps4rtgpu.so': '$ORIGIN/../../lib',
+    'bin/ps4rt-gpu-capabilities': '$ORIGIN/../lib',
+    **{'lib/' + name: '$ORIGIN' for name in LINUX_LIBRARIES},
+}
+
+
+def verify_bundle(bundle):
+    """Validate the exact tested, relocatable Linux inputs before packaging."""
+    if not bundle.is_dir():
+        raise SystemExit(f'Linux bundle not found: {bundle}')
+    for rel, expected in EXPECTED_RUNPATH.items():
+        path = bundle / rel
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit('Missing or symlinked ELF in bundle: ' + rel)
+        actual = subprocess.check_output(
+            ['patchelf', '--print-rpath', str(path)], text=True).strip()
+        if actual != expected:
+            raise SystemExit(f'Unexpected RUNPATH for {rel}: {actual!r}')
+        info = subprocess.check_output(
+            ['readelf', '-W', '--version-info', str(path)], text=True)
+        versions = [
+            tuple(map(int, match.split('.')))
+            for match in re.findall(r'GLIBC_(\d+(?:\.\d+)+)', info)
+        ]
+        if versions and max(versions) > (2, 35):
+            raise SystemExit(f'glibc newer than 2.35: {rel}')
+    env = os.environ.copy()
+    env.pop('LD_LIBRARY_PATH', None)
+    env.pop('LD_PRELOAD', None)
+    for rel in ('bin/ps4rt', 'bin/gpu/libps4rtgpu.so', 'bin/ps4rt-gpu-capabilities'):
+        result = subprocess.run(['ldd', str(bundle / rel)], capture_output=True, text=True, env=env)
+        if result.returncode or 'not found' in result.stdout + result.stderr:
+            raise SystemExit('Host dependency failure for ' + rel + '\n' + result.stdout + result.stderr)
+        for line in result.stdout.splitlines():
+            m = re.match(r'\s*(\S+)\s+=>\s+(/\S+)\s+\(', line)
+            if m and (bundle / 'lib' / m.group(1)).is_file():
+                if Path(m.group(2)).resolve() != (bundle / 'lib' / m.group(1)).resolve():
+                    raise SystemExit('Bundled dependency escaped bundle: ' + line)
 
 
 def source_allowed(name):
@@ -92,14 +143,21 @@ def git(*args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime', action='store_true', help='Include Linux x86-64 binaries (tested on Fedora 44; no system libraries)')
+    parser.add_argument('--runtime', action='store_true', help='Include audited glibc 2.35 Linux binaries and libraries')
+    parser.add_argument('--bundle-from', type=Path,
+                        help='Verified Ubuntu-built ELF and lib/ bundle (required for --runtime)')
     parser.add_argument('--preview', action='store_true', help='Print the exact file list without creating an archive')
     parser.add_argument('--output', type=Path, default=ROOT / 'out/community')
     args = parser.parse_args()
+    if args.runtime and args.bundle_from is None:
+        parser.error('--runtime requires --bundle-from PATH')
+    bundle = args.bundle_from.expanduser().resolve() if args.bundle_from else None
     revision = git('rev-parse', 'HEAD').decode().strip()
     files = git('ls-tree', '-r', '--name-only', 'HEAD').decode().splitlines()
     source_files = [f for f in files if source_allowed(f)]
     runtime_files = dict(RUNTIME)
+    if args.runtime:
+        runtime_files.update({'lib/' + name: 'lib/' + name for name in LINUX_LIBRARIES})
     runtime_files.update({name: name for name in FSR4_FILES})
     if args.preview:
         print(json.dumps({'revision': revision, 'source_files': source_files,
@@ -107,6 +165,8 @@ def main():
         return
     print(f'Packaging {revision[:7]}: {len(source_files)} source files'
           + (f', {len(runtime_files)} runtime assets' if args.runtime else ''))
+    if args.runtime:
+        verify_bundle(bundle)
     if git('status', '--porcelain').strip():
         raise SystemExit('Checkpoint the working tree first; releases must identify the exact committed source.')
     if not source_files or 'build.sh' not in source_files:
@@ -122,7 +182,7 @@ def main():
         raise SystemExit(f'Archive already exists: {target}')
     manifest = {'revision': revision, 'kind': kind, 'files': {}}
     if args.runtime:
-        manifest.update(label='Linux x86-64 — currently tested on Fedora 44',
+        manifest.update(label='Linux x86-64, glibc 2.35+, Fedora gameplay tested',
                         tested_on=['Fedora 44'], fsr4_v07={
                             'asset_commit': FSR4_LOCK['asset_commit'],
                             'license_notice': FSR4_LOCK['license_notice'],
@@ -153,11 +213,11 @@ def main():
                 add(('source/' if args.runtime else '') + member.name, data, member.mode)
         if args.runtime:
             for dest, src in runtime_files.items():
-                path = ROOT / src
+                path = (bundle if dest.startswith(('bin/', 'lib/')) else ROOT) / src
                 if path.is_symlink() or not path.is_file():
                     raise ValueError(f'Expected regular file: {src}')
                 data = path.read_bytes()
-                if dest.startswith('bin/') and not data.startswith(b'\x7fELF'):
+                if dest.startswith(('bin/', 'lib/')) and not data.startswith(b'\x7fELF'):
                     raise ValueError(f'Expected native host ELF: {src}')
                 add(dest, data, 0o755 if dest.startswith('bin/') or dest.endswith('.sh') else 0o644)
         add('MANIFEST.json', (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode())
