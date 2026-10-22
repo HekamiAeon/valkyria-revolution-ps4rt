@@ -14,14 +14,59 @@ your own extracted, plaintext CUSA06810 game folder. The launcher does not
 download games, decrypt encrypted packages, or connect to PSN. This project is
 not affiliated with Sega, Sony, or AMD.
 
+## Download and play (no compiling required)
+
+**Want to play? Use the Linux runtime archive, not the source archive. No compilation or developer container is required.**
+
+**Release status:** The new **glibc 2.35 portable v1.1 candidate** has passed a
+clean automated build and a local extracted-archive gameplay test on Fedora.
+It has **not yet been published** as a GitHub release. The previously published
+v1.0 binaries use a different, newer-glibc dependency baseline. When v1.1 is
+published, obtain the Linux runtime from the [releases page](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases).
+
+1. Download `valkyria-revolution-linux-x86_64-<commit>.tar.gz` from the release assets, **not** `valkyria-revolution-source-<commit>.tar.gz`.
+2. Supply your own **extracted plaintext CUSA06810 game folder** containing `eboot.bin`, `sce_sys/param.sfo`, system modules, and game data. Pass the game folder itself, **not the PKG, eboot.bin, or its parent**.
+3. Extract the download and open a terminal inside its extracted folder.
+4. Run the game:
+
+```bash
+bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+```
+
+Leave the extracted release folder together. Your game extraction is read
+rather than overwritten; the first launch creates local working data. Quote
+game paths containing spaces. To browse for the folder instead, run
+`bash Play-Valkyria.sh` without `--game`, if Python Tkinter is installed.
+
+**Graphics are controlled in-game.** Open the overlay with **Insert** or
+**L2 + R3 click**. It controls 1080p, 1440p, 4K output, Off / FSR 3.1 / FSR 4 v07
+upscaling, anisotropic filtering and sharpening. AF requires a restart; other
+graphics changes apply live. FSR and output-resolution command-line options
+are not required to launch the game.
+
+**Prebuilt requirements:** Linux x86-64 with **glibc 2.35 or later**, Python 3,
+a Vulkan loader, a working Vulkan driver and compatible system display/audio
+libraries. The release includes twelve audited application shared libraries
+under `lib/`, including SDL3, FFmpeg 8.0.3, fmt, xxHash, Zydis, zlib,
+libstdc++, and libgcc_s. The graphics driver, Vulkan loader, glibc and
+remaining system integration libraries are **not** bundled. No separate
+installation of the twelve included libraries or `LD_LIBRARY_PATH` setup
+is required. The portable rebuild and extracted release archive were
+gameplay-tested on Fedora; other distributions, including SteamOS, remain
+unverified. glibc compatibility alone does not guarantee every distro works.
+
+See [Running on Linux](docs/RUNNING_LINUX.md) for controls and game-file setup;
+the archive never includes the PS4 game or firmware.
+
 ## Current status
 
 **Experimental, playable in the tested opening sections; not a verified full
 playthrough.** Tested on **Fedora 44** with an **AMD Ryzen 7 9700X** CPU and
 **NVIDIA GeForce RTX 3080 Ti** GPU: introduction, cinematics, subtitles, audio,
 controller input, menus, early combat, first boss, initial save/load, and 4K
-output with FSR 4 v07. Other Linux distributions and hardware configurations
-have not yet been verified.
+output with FSR 4 v07. The newer portable release pipeline also passed
+boot/gameplay and overlay smoke testing on an AMD-based Fedora system.
+Other Linux distributions remain unverified.
 
 - SDL-compatible gamepads, including DualSense and XInput, plus keyboard controls.
 - Output at 1080p, 1440p, or 4K; FSR 3.1, optional FSR 4 v07, and sharpening.
@@ -47,40 +92,28 @@ and provenance are recorded in `packaging/fsr4-v07-assets.json`. FSR 4 requires
 compatible Vulkan GPU features and otherwise falls back to FSR 3.1. This is
 **not FSR 4.1.1**.
 
-## Quick start: prebuilt Linux runtime
+## Build from source (developers only)
 
-1. Extract the `valkyria-revolution-linux-x86_64-*.tar.gz` release archive.
-2. Open a terminal in the extracted directory.
-3. Run the launcher with the path to **your own extracted CUSA06810 folder**:
-
-```bash
-bash Play-Valkyria.sh --game /path/to/your/CUSA06810
-```
-
-You can also run `bash Play-Valkyria.sh` without `--game` to select the folder
-through a graphical chooser, when Python Tkinter is installed. The game folder
-must contain `sce_sys/param.sfo`, `eboot.bin`, the required modules, and game
-data. The launcher reads the originals and prepares private working files.
-
-**Prebuilt requirements:** Linux x86-64, **glibc 2.43 or later**, Python 3,
-a Vulkan loader and compatible graphics driver, and compatible SDL3, FFmpeg,
-fmt, xxhash, Zydis, and X11 libraries. System drivers and libraries are **not
-bundled**. Fedora 44 is the tested environment; other distributions may need
-a source build against their own dependencies.
-
-## Build from source
+**Downloaded the prebuilt Linux release? Skip this section.** The commands
+below are only for contributors who want to compile PS4RT.
 
 Install a C/C++ toolchain, CMake, Ninja, pkg-config, Python 3, and development
 packages for Vulkan, SDL3, FFmpeg, fmt, Boost, xxhash, robin-map, Vulkan Memory
 Allocator, Zydis, glslang, and X11. Third-party sources needed by the build
 are vendored in this repository.
 
-From the source checkout's root:
+From the source checkout's root, the traditional native source build is:
 
 ```bash
 PS4RT_LTO=OFF bash build.sh --test
 python3 scripts/valkyria_launch.py --game /path/to/your/CUSA06810
 ```
+
+For the tested **portable release builder**, use the Ubuntu 22.04 / GCC 14
+Podman toolchain instead. It produces a glibc 2.35-compatible, relocatable
+runtime without changing game source files or the user's private saves.
+See [portable build instructions](packaging/linux/README.md) for the image
+recipes, audit, and packaging commands. Players do **not** need Podman.
 
 ### Keyboard and controller remapping
 
