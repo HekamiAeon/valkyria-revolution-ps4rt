@@ -6,18 +6,19 @@ on earlier compatibility-runtime and shadPS4 code; original copyright and GPL no
 
 ## For players: download, extract, run
 
-**You do not need to compile PS4RT to play.** Once the new portable
-v1.1 release is published, download the `valkyria-revolution-linux-x86_64-<commit>.tar.gz`
-runtime archive from the [releases page](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases).
-The separately named `source` archive is for developers. The old v1.0 public
-release predates this glibc 2.35 portable rebuild.
-
-Extract the Linux runtime archive, open a terminal in the extracted folder,
-and run:
+**You do not need to compile PS4RT to play.** Get the runtime archive
+**`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`** from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest), not the
+`valkyria-revolution-source-35f35f5.tar.gz` developer archive.
+v1.0 is preserved for reference but superseded by v1.1.
 
 ```bash
-bash Play-Valkyria.sh --game /path/to/your/CUSA06810
+tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
+cd valkyria-revolution-linux-x86_64-35f35f5
+bash Play-Valkyria.sh --game "/path/to/CUSA06810"
 ```
+
+The twelve bundled application libraries load automatically with relative
+`$ORIGIN` paths; no `LD_LIBRARY_PATH` or source compilation is needed.
 
 Supply **the extracted CUSA06810 folder**, not the PKG, parent folder or
 `eboot.bin` itself. Keep the release files together and writable.
@@ -56,7 +57,7 @@ The enlarged translucent wine-red menu can display an optional locally supplied
 portrait *inside* its panel, with optional WAV navigation/confirm/cancel cues.
 Missing media falls back gracefully. See `packaging/linux/README.md` in the
 source archive for exact asset filenames and release packaging behavior.
-The single graphics panel offers 1080p, 1440p, and 4K output; Off/Original,
+The single graphics panel offers Windowed / Borderless / Fullscreen mode; 1080p, 1440p, and 4K output; Off/Original,
 FSR 3.1, and FSR 4 v07; anisotropic filtering (Game default / 2× / 4× /
 8× / 16×); and sharpening. AF improves angled texture clarity independently
 of FSR's anti-aliasing and requires a game restart. Other image changes apply
@@ -135,7 +136,9 @@ The package is a local candidate; creating it does not publish or upload it.
 The exporter does **not** copy directories from `out/`, originals, saves,
 screenshots, shader/pipeline caches, prepared executables, PS4 modules, FSR 4.1.1
 DLLs or models. Inherited launcher artwork/font with unreviewed provenance
-is excluded from the source export. No new game artwork is needed for the port UI.
+is excluded from the source export. The v1.1 runtime includes the locally
+supplied overlay artwork and recorded audio. Their rights/provenance require
+a separate review; they are not part of the committed source export.
 Do not share an arbitrary ZIP of this workspace, its Git metadata/history, or
 the development checkpoints folder instead of the reviewed export.
 
@@ -159,6 +162,7 @@ not grant permission to distribute Sega/Sony game content or use their branding.
 Before a public release: test the extracted candidate on the declared target,
 verify the checksums/file list, provide its matching source archive and attribution,
 and describe the actual tested gameplay coverage and known limitations.
-**The bundled shared-library notices and corresponding-source checklist is
-not complete; do not publish v1.1 until it has been resolved.** Publication
-and uploading remain a separate owner decision.
+**Maintainer follow-up:** v1.1 is already public. Complete any outstanding
+bundled-library notices/corresponding-source and overlay-media redistribution
+reviews. Technical release validation does not establish rights compliance.
+Review these obligations before any future binary releases.

@@ -2,25 +2,37 @@
 
 This is an experimental, standalone Linux compatibility runtime for the PlayStation 4 version of Valkyria Revolution (CUSA06810). It requires user-supplied game files; no game or firmware is distributed.
 
-## Building
+## Download and run v1.1 (no compiling)
 
-Install the development dependencies listed in the [README](../README.md), then run:
+**Playing the game? Download the Linux runtime from the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest).** Choose **`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`**, not the developer `source` archive. The older v1.0 binaries are superseded.
+
+1. Supply your own extracted, plaintext `CUSA06810` folder with `eboot.bin`, `sce_sys/param.sfo`, the required PS4 modules and game data. Do not use a `.pkg`, `eboot.bin` alone, or the parent folder.
+2. Extract the Linux runtime, open a terminal inside its extracted folder, and run:
+
+```bash
+tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
+cd valkyria-revolution-linux-x86_64-35f35f5
+bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+```
+
+Keep the release folder intact. The launcher reads original game files and stores generated files, settings and saves under `${XDG_DATA_HOME:-~/.local/share}/valkyria-revolution/` by default. To choose the game directory graphically, run `bash Play-Valkyria.sh` without `--game` (requires Python Tkinter).
+
+**No source build, Podman, FFmpeg/SDL3 installation, or `LD_LIBRARY_PATH` override is needed.** You still need native x86-64 Linux, glibc 2.35+, Python 3 and a working host Vulkan/display/audio stack. ARM64, including FEX/Box64 execution, is unsupported.
+
+**Graphics are configured in-game.** Press **Insert** or **L2 + R3**. The wine-red overlay offers Windowed / Borderless / Fullscreen mode, 1080p / 1440p / 4K output, Off / FSR 3.1 / FSR 4 v07 where supported, sharpening and anisotropic filtering. AF changes require a restart. Launch arguments for FSR and resolution are unnecessary.
+
+The game and firmware are not included. Fedora gameplay was tested through the first three chapters; a full playthrough or other Linux distributions are unverified.
+
+## Building and launching source (developers only)
+
+**Players can skip this section.** Install the development dependencies listed in the [README](../README.md), then run:
 
 ```bash
 PS4RT_LTO=OFF bash build.sh --test
+python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810"
 ```
 
-## Launching
-
-Point the launcher at your own extracted, plaintext CUSA06810 game folder:
-
-```bash
-python3 scripts/valkyria_launch.py --game /path/to/CUSA06810
-```
-
-Without `--game`, the launcher can offer a folder chooser when Tkinter is available. The selected folder must include `sce_sys/param.sfo` and game executable/data files. The launcher does not decrypt packages or download game files.
-
-Build outputs, prepared code, saves, and settings are stored under `out/valkyria/` for source builds. A packaged runtime uses `${XDG_DATA_HOME:-~/.local/share}/valkyria-revolution/`. These local directories must not be published.
+Source checkouts use `out/valkyria/` for generated files and saves. Do not distribute that directory. The prebuilt release is launched with `Play-Valkyria.sh` instead.
 
 ## Controls
 
@@ -70,7 +82,7 @@ editing the relevant source and rebuilding.
 
 ### Graphics menu and exiting
 
-Press **Insert** or hold **L2** and click **R3** to open the runtime graphics menu. Use D-pad, Cross, and Circle to navigate. Display output choices include 1080p, 1440p and 4K, with FSR 3.1 or FSR 4 v07 on compatible GPUs, and sharpening. FSR 3.1 and FSR 4 v07 provide anti-aliasing (AA) as part of reconstruction, including Native AA at 1080p. Anisotropic filtering (AF) is a separate texture option with Game default / 2× / 4× / 8× / 16× choices. AF changes are saved when closing the menu and take effect after restarting the game; resolution, FSR and sharpening apply live. The game still renders its original 1080p scene before reconstruction; a 4K output is not native 4K rasterization. The game's original frame-rate behavior is retained.
+Press **Insert** or hold **L2** and click **R3** to open the runtime graphics menu. Use D-pad, Cross, and Circle to navigate. Window modes include Windowed, Borderless and Fullscreen. Display output choices include 1080p, 1440p and 4K, with FSR 3.1 or FSR 4 v07 on compatible GPUs, and sharpening. FSR 3.1 and FSR 4 v07 provide anti-aliasing (AA) as part of reconstruction, including Native AA at 1080p. Anisotropic filtering (AF) is a separate texture option with Game default / 2× / 4× / 8× / 16× choices. AF changes are saved when closing the menu and take effect after restarting the game; resolution, FSR and sharpening apply live. The game still renders its original 1080p scene before reconstruction; a 4K output is not native 4K rasterization. The game's original frame-rate behavior is retained.
 
 To leave the game, open the graphics menu and choose **Exit Game**, then
 confirm **Exit to desktop**. Select **Cancel** or press Circle/Escape to stay
