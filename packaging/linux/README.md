@@ -37,3 +37,33 @@ The image recipes are not bit-for-bit reproducible because some toolchain packag
 review in `packaging/linux/THIRD_PARTY_REVIEW.md` is complete. Do not put game files, prepared executables, user saves, shaders, captures, or firmware into published archives.
 
 **Release workflow:** validate the built bundle, build the exact committed-source archive, test the freshly extracted archive, then publish separately. The existing v1.0 release is untouched.
+
+## Optional local overlay artwork and audio
+
+The committed source contains **empty placeholder directories**. Put your own
+media locally at the following paths relative to the Valkyria repo root:
+
+```text
+gpu/assets/valkyria_overlay.png
+gpu/assets/sounds/navigate.wav
+gpu/assets/sounds/confirm.wav
+gpu/assets/sounds/cancel.wav
+```
+
+`open.wav` is optional. The Star Ocean audio player uses a synthesized fallback
+when any WAV is missing. The game opens the menu with the confirm sound, as in
+Star Ocean. The portrait is drawn **inside** the translucent wine-red menu
+panel, center-cropped to preserve its aspect ratio. Menu dimensions match Star
+Ocean's compact 1080x650 design at 1080p. The window-mode dropdown already
+existed and is now available in Valkyria's compact graphics page.
+
+The recorded files must be ordinary RIFF WAV files under 2 MiB each.
+The portrait should be PNG, maximum 4096x4096. The build script copies
+only these named local files into the isolated test bundle; the runtime exporter
+then includes only the files in that *same staged bundle*. These local media
+files are git-ignored and are never included in the corresponding source archive.
+The executable still works without them.
+
+**Before publishing a runtime archive containing the media, review distribution
+rights, attributions and any required permission.** The packaging step verifies
+format/size, not copyright or ownership.

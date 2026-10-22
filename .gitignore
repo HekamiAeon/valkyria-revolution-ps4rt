@@ -56,3 +56,6 @@ CLAUDE.md
 *.mov
 *.tar.gz
 *.zip
+
+# Locally provided overlay artwork and audio; never commit these media files.
+/gpu/assets/sounds/*.wav

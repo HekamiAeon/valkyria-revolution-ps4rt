@@ -60,6 +60,8 @@ command -v "$CXX" >/dev/null
 
 echo '=== COMPILE MAIN + GPU ==='
 bash build.sh
+ninja -j "${PS4RT_BUILD_JOBS:-4}" -C out/gpu menu-sounds-test
+out/gpu/menu-sounds-test
 [[ -f out/ps4rt && -f out/gpu/libps4rtgpu.so && -f out/ps4rt-gpu-capabilities ]]
 install -Dm755 out/ps4rt /stage/bin/ps4rt
 install -Dm755 out/gpu/libps4rtgpu.so /stage/bin/gpu/libps4rtgpu.so
@@ -118,6 +120,22 @@ cp -a -- "$SOURCE/scripts" "$STAGE/"
 cp -a -- "$SOURCE/packaging/linux/Play-Valkyria.sh" "$STAGE/"
 cp -a -- "$SOURCE/LICENSE" "$STAGE/"
 cp -a -- "$SOURCE/fsr4_shaders" "$STAGE/"
+
+# Media is deliberately local-only (not in the Git archive). Copy only the
+# allowlisted files the developer placed in gpu/assets, never arbitrary media.
+# Missing files are fine: the menu uses a clean theme and synthesized cues.
+ASSET_ROOT="$ROOT/gpu/assets"
+mkdir -p "$STAGE/gpu/assets/sounds"
+for name in valkyria_overlay.png; do
+  if [[ -f "$ASSET_ROOT/$name" && ! -L "$ASSET_ROOT/$name" ]]; then
+    cp -- "$ASSET_ROOT/$name" "$STAGE/gpu/assets/$name"
+  fi
+done
+for name in navigate.wav confirm.wav cancel.wav open.wav; do
+  if [[ -f "$ASSET_ROOT/sounds/$name" && ! -L "$ASSET_ROOT/sounds/$name" ]]; then
+    cp -- "$ASSET_ROOT/sounds/$name" "$STAGE/gpu/assets/sounds/$name"
+  fi
+done
 patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/gpu' "$STAGE/bin/ps4rt"
 patchelf --set-rpath '$ORIGIN/../../lib' "$STAGE/bin/gpu/libps4rtgpu.so"
 patchelf --set-rpath '$ORIGIN/../lib' "$STAGE/bin/ps4rt-gpu-capabilities"
