@@ -52,6 +52,10 @@ Game input files are only read. The generated `boot*.bin` and linked module
 code are still game content: never distribute this private data directory.
 
 Press **Insert**, or hold **L2** and click **R3**, to open the port's menu.
+The enlarged translucent wine-red menu can display an optional locally supplied
+portrait *inside* its panel, with optional WAV navigation/confirm/cancel cues.
+Missing media falls back gracefully. See `packaging/linux/README.md` in the
+source archive for exact asset filenames and release packaging behavior.
 The single graphics panel offers 1080p, 1440p, and 4K output; Off/Original,
 FSR 3.1, and FSR 4 v07; anisotropic filtering (Game default / 2× / 4× /
 8× / 16×); and sharpening. AF improves angled texture clarity independently

@@ -10,11 +10,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <array>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL3/SDL.h>
 #include "ps4rt_settings.h"
 #include "ps4rt_menu_input.h"
+#include "ps4rt_menu_sounds.h"
 #include "ps4rt_graphics.h"
 #include "ps4rt_perf_stats.h"
 
@@ -70,6 +73,8 @@ std::atomic<s64> notice_until{0}; // steady_clock milliseconds
 bool dirty = false; // settings changed while open: saved on close
 bool focus_graphics = false;
 Ps4RtMenuInput::Controllers menu_controllers;
+Ps4RtMenuSounds::Player menu_sounds;
+std::unordered_map<SDL_JoystickID, std::array<int, 2>> menu_stick_directions;
 bool cancel_was_editing = false;
 int requested_tab = -1; // switch on the next frame (L1/R1, Q/E, menu opened)
 // The game's text dialog (SetTextEntry), guarded by imgui_mutex.
@@ -86,6 +91,9 @@ std::atomic<int> choice_result{-1}; // -1 open, -2 cancelled, else the chosen in
 std::vector<Ps4RtPng::Image> choice_pictures;
 std::vector<ImTextureData*> choice_textures, choice_retired;
 std::atomic<bool> choice_retiring{false};
+// Optional portrait art for the inner menu panel, uploaded once to ImGui.
+ImTextureData* menu_art_texture = nullptr;
+ImVec2 menu_art_size{};
 float base_scale = 1.0f;
 
 // Present rate for the FPS counter.
@@ -106,8 +114,10 @@ void SetOpen(bool value) {
     if (value) {
         requested_tab = Ps4RtSettings::Get().menu_tab;
         focus_graphics = true;
+        menu_sounds.Play(Ps4RtMenuSounds::Cue::Confirm);
     } else {
         menu_controllers.Release();
+        menu_stick_directions.clear();
     }
     if (!value && dirty) {
         dirty = false;
@@ -304,6 +314,9 @@ void GameTab() {
 void ValkyriaGraphics() {
     auto& s = Ps4RtSettings::Get();
     if (BeginRows("##valkyria_image")) {
+        ChoiceRow("Display mode", s.display_mode, Ps4RtGraphics::DisplayModeNames.data(),
+                  nullptr, Ps4RtGraphics::DisplayModeCount,
+                  "Windowed, borderless window, or exclusive fullscreen. Applies immediately.");
         static const char* const outputs[] = {"1920 x 1080", "2560 x 1440", "3840 x 2160 (4K)"};
         static constexpr int output_values[] = {1, 2, 3};
         Row("Output resolution");
@@ -347,7 +360,7 @@ void ValkyriaGraphics() {
         ImGui::EndTable();
     }
     {
-        ImGui::TextDisabled("Resolution, FSR and sharpening apply live. Choices save on close.");
+        ImGui::TextDisabled("Display mode, resolution, FSR and sharpening apply live. Choices save on close.");
         if (s.anisotropy != s.startup_anisotropy)
             ImGui::TextWrapped("Restart the game to apply the selected anisotropic filtering.");
         else
@@ -515,14 +528,59 @@ int RestartChanges() {
            (s.anisotropy != s.startup_anisotropy);
 }
 
+// Render game art only within the settings window, below all its controls.
+// Retain the original image aspect ratio by center-cropping instead of stretching it.
+void DrawMenuArtInWindow() {
+    if (!menu_art_texture || menu_art_size.x <= 0.0f || menu_art_size.y <= 0.0f) return;
+
+    const ImVec2 window_pos = ImGui::GetWindowPos();
+    const ImVec2 window_size = ImGui::GetWindowSize();
+    // Begin() has positioned the cursor below the title bar and within the window padding.
+    const ImVec2 area_min = ImGui::GetCursorScreenPos();
+    const float margin = 12.0f * base_scale;
+    const ImVec2 area_max(window_pos.x + window_size.x - margin,
+                          window_pos.y + window_size.y - margin);
+    const float width = area_max.x - area_min.x;
+    const float height = area_max.y - area_min.y;
+    if (width <= 0.0f || height <= 0.0f) return;
+
+    ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+    const float image_ratio = menu_art_size.x / menu_art_size.y;
+    const float panel_ratio = width / height;
+    if (image_ratio > panel_ratio) {
+        const float crop = (1.0f - panel_ratio / image_ratio) * 0.5f;
+        uv0.x = crop;
+        uv1.x = 1.0f - crop;
+    } else {
+        const float crop = (1.0f - image_ratio / panel_ratio) * 0.5f;
+        uv0.y = crop;
+        uv1.y = 1.0f - crop;
+    }
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->PushClipRect(area_min, area_max, true);
+    // The panel is a portrait-backed translucent surface, not a fullscreen takeover.
+    draw->AddImage(menu_art_texture->GetTexRef(), area_min, area_max,
+                   uv0, uv1, IM_COL32(255, 255, 255, 215));
+    draw->AddRectFilled(area_min, area_max, IM_COL32(47, 14, 22, 158));
+    // Slightly darker near the settings labels and footer.
+    draw->AddRectFilledMultiColor(area_min, area_max,
+                                 IM_COL32(50, 20, 22, 105), IM_COL32(55, 29, 24, 45),
+                                 IM_COL32(42, 18, 24, 110), IM_COL32(37, 18, 21, 125));
+    draw->PopClipRect();
+}
+
 void Menu() {
     auto& s = Ps4RtSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min((s.valkyria ? 660.0f : 760.0f) * base_scale, viewport->WorkSize.x * 0.95f),
-                                    std::min((s.valkyria ? 390.0f : 680.0f) * base_scale, viewport->WorkSize.y * 0.9f)),
+    // Match Star Ocean's larger 16:9 portrait-backed compact menu.
+    const float target_width = (s.valkyria ? 1080.0f : 1120.0f) * base_scale;
+    const float target_height = (s.valkyria ? 650.0f : 760.0f) * base_scale;
+    ImGui::SetNextWindowSize(ImVec2(std::min(target_width, viewport->WorkSize.x * 0.88f),
+                                    std::min(target_height, viewport->WorkSize.y * 0.82f)),
                              ImGuiCond_Appearing);
     bool keep_open = true;
     // ps4rt: the game's own title (param.sfo), not a fixed one.
@@ -536,6 +594,7 @@ void Menu() {
         ImGui::End();
         return;
     }
+    DrawMenuArtInWindow();
     footer_help = nullptr;
     if (s.valkyria) {
         ValkyriaGraphics();
@@ -855,10 +914,41 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
 
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.Colors[ImGuiCol_WindowBg].w = 0.92f;
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 7.0f;
+    style.PopupRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.GrabRounding = 6.0f;
+    style.ScrollbarRounding = 7.0f;
+    style.WindowBorderSize = 1.2f;
+    style.FrameBorderSize = 0.7f;
+    style.WindowPadding = ImVec2(16.0f, 14.0f);
+    style.FramePadding = ImVec2(9.0f, 6.0f);
+    style.ItemSpacing = ImVec2(8.0f, 7.0f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.18f, 0.065f, 0.075f, 0.78f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.18f, 0.085f, 0.08f, 0.38f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.19f, 0.085f, 0.08f, 0.94f);
+    colors[ImGuiCol_Border] = ImVec4(0.77f, 0.47f, 0.32f, 0.80f);
+    colors[ImGuiCol_Text] = ImVec4(1.0f, 0.96f, 0.91f, 1.0f);
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.79f, 0.68f, 0.62f, 1.0f);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.18f, 0.055f, 0.075f, 0.92f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.32f, 0.10f, 0.12f, 0.97f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.32f, 0.14f, 0.14f, 0.85f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.48f, 0.20f, 0.17f, 0.95f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.60f, 0.28f, 0.19f, 0.98f);
+    colors[ImGuiCol_Button] = ImVec4(0.32f, 0.13f, 0.14f, 0.94f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.55f, 0.24f, 0.20f, 1.0f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.62f, 0.31f, 0.22f, 1.0f);
+    colors[ImGuiCol_Header] = ImVec4(0.36f, 0.15f, 0.15f, 0.85f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.58f, 0.27f, 0.20f, 1.0f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.65f, 0.34f, 0.23f, 1.0f);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.98f, 0.79f, 0.55f, 1.0f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.88f, 0.62f, 0.42f, 1.0f);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(1.0f, 0.88f, 0.62f, 1.0f);
+    colors[ImGuiCol_Separator] = ImVec4(0.68f, 0.38f, 0.27f, 0.42f);
+    colors[ImGuiCol_NavCursor] = ImVec4(1.0f, 0.84f, 0.60f, 1.0f);
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
@@ -897,6 +987,23 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         ImGui::DestroyContext();
         return;
     }
+    // Optional art is a single retained texture; the same Vulkan backend also
+    // handles the save-dialog PNGs. No per-frame decoding or image upload.
+    if (const char* path = std::getenv("PS4RT_OVERLAY_BACKGROUND"); path && *path) {
+        Ps4RtPng::Image art;
+        if (Ps4RtPng::LoadRgba(path, art) && !art.rgba.empty() &&
+            art.width > 0 && art.height > 0 && art.width <= 4096 && art.height <= 4096) {
+            menu_art_texture = IM_NEW(ImTextureData)();
+            menu_art_texture->Create(ImTextureFormat_RGBA32, art.width, art.height);
+            std::memcpy(menu_art_texture->GetPixels(), art.rgba.data(), art.rgba.size());
+            ImGui::RegisterUserTexture(menu_art_texture);
+            menu_art_size = ImVec2(float(art.width), float(art.height));
+            std::printf("Overlay: loaded menu art %dx%d from %s\n", art.width, art.height, path);
+        } else {
+            std::fprintf(stderr, "Overlay: menu art unavailable or invalid: %s\n", path);
+        }
+    }
+    menu_sounds.Init(); // independent SDL3 stream; failures never prevent opening the menu
     overlay_instance = &instance;
     initialized = true;
     std::printf("Overlay: menu ready (Insert or R3+L2)\n");
@@ -1018,11 +1125,13 @@ bool HandleEvent(const SDL_Event& event) {
         if (is_open && event.key.key == SDLK_ESCAPE &&
             ImGui::IsPopupOpen("Exit Valkyria Revolution?")) {
             // Let Escape cancel the exit confirmation instead of closing the whole panel.
+            if (down && !event.key.repeat) menu_sounds.Play(Ps4RtMenuSounds::Cue::Cancel);
             io.AddKeyEvent(ImGuiKey_Escape, down);
             return true;
         }
         if (down && !event.key.repeat &&
             (event.key.key == SDLK_INSERT || (is_open && event.key.key == SDLK_ESCAPE))) {
+            if (is_open) menu_sounds.Play(Ps4RtMenuSounds::Cue::Cancel);
             SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
             return true;
         }
@@ -1034,6 +1143,19 @@ bool HandleEvent(const SDL_Event& event) {
         io.AddKeyEvent(ImGuiMod_Alt, (event.key.mod & SDL_KMOD_ALT) != 0);
         if (const ImGuiKey key = KeyFromSdl(event.key.key); key != ImGuiKey_None) {
             io.AddKeyEvent(key, down);
+        }
+        if (down && !event.key.repeat) {
+            using Cue = Ps4RtMenuSounds::Cue;
+            switch (event.key.key) {
+            case SDLK_UP: case SDLK_DOWN: case SDLK_LEFT: case SDLK_RIGHT:
+            case SDLK_TAB: case SDLK_Q: case SDLK_E:
+                menu_sounds.Play(Cue::Navigate); break;
+            case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE:
+                menu_sounds.Play(Cue::Confirm); break;
+            case SDLK_BACKSPACE:
+                menu_sounds.Play(Cue::Cancel); break;
+            default: break;
+            }
         }
         return true;
     }
@@ -1057,6 +1179,20 @@ bool HandleEvent(const SDL_Event& event) {
         if (const ImGuiKey key = KeyFromGamepad(button); key != ImGuiKey_None) {
             io.AddKeyEvent(key, down);
         }
+        if (down) {
+            using Cue = Ps4RtMenuSounds::Cue;
+            switch (button) {
+            case SDL_GAMEPAD_BUTTON_DPAD_UP: case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+            case SDL_GAMEPAD_BUTTON_DPAD_LEFT: case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+                menu_sounds.Play(Cue::Navigate); break;
+            case SDL_GAMEPAD_BUTTON_SOUTH:
+                menu_sounds.Play(Cue::Confirm); break;
+            case SDL_GAMEPAD_BUTTON_EAST:
+                menu_sounds.Play(Cue::Cancel); break;
+            default: break;
+            }
+        }
         return true;
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
@@ -1073,6 +1209,13 @@ bool HandleEvent(const SDL_Event& event) {
              event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) &&
             menu_controllers.Accept(event.gaxis.which, std::abs(int(event.gaxis.value)) > 9000)) {
             const bool horizontal = event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX;
+            int& previous = menu_stick_directions[event.gaxis.which][horizontal ? 0 : 1];
+            const int value = int(event.gaxis.value);
+            const int direction = value > 19000 ? 1 : value < -19000 ? -1 :
+                                  std::abs(value) < 9000 ? 0 : previous;
+            if (direction != 0 && direction != previous)
+                menu_sounds.Play(Ps4RtMenuSounds::Cue::Navigate);
+            previous = direction;
             const float negative = Ps4RtMenuInput::Axis(event.gaxis.value, false);
             const float positive = Ps4RtMenuInput::Axis(event.gaxis.value, true);
             io.AddKeyAnalogEvent(horizontal ? ImGuiKey_GamepadLStickLeft : ImGuiKey_GamepadLStickUp,
@@ -1084,6 +1227,7 @@ bool HandleEvent(const SDL_Event& event) {
     }
     case SDL_EVENT_GAMEPAD_REMOVED:
         menu_controllers.Remove(event.gdevice.which);
+        menu_stick_directions.erase(event.gdevice.which);
         io.ClearInputKeys();
         return is_open;
     case SDL_EVENT_TEXT_INPUT: {
@@ -1220,6 +1364,21 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (menu_open) {
         Menu();
+        // ImGui key repeat fires while navigation is held.
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) ||
+            ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+            menu_sounds.Play(Ps4RtMenuSounds::Cue::Navigate);
+        }
     }
     if (Ps4RtSettings::Get().show_fps && !menu_open) {
         FpsCounter();

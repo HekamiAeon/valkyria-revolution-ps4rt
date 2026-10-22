@@ -72,6 +72,16 @@ def main(argv=None):
                PS4RT_DUMP_TRIGGER=str(data / 'next-temporal.request'))
     env.setdefault('PS4RT_DUMP_FRAMES', '2')
     env.setdefault('PS4RT_FSR4_DIR', str(ROOT / 'fsr4_shaders'))
+    # Optional portrait and menu sounds live under the runtime root.
+    # The local asset folders can be populated without changing Python/C++ code.
+    if not env.get('PS4RT_OVERLAY_BACKGROUND'):
+        art = ROOT / 'gpu/assets/valkyria_overlay.png'
+        if art.is_file():
+            env['PS4RT_OVERLAY_BACKGROUND'] = str(art)
+    if not env.get('PS4RT_MENU_SOUND_DIR'):
+        sounds = ROOT / 'gpu/assets/sounds'
+        if sounds.is_dir():
+            env['PS4RT_MENU_SOUND_DIR'] = str(sounds)
     os.execve(str(binary), [str(binary), str(data / 'boot-linked.bin'), '--app0', str(game),
               '--user', str(data / 'user'), '--content-profile', str(data / 'content.bin'),
               '--timeout', '0', *runtime_args], env)

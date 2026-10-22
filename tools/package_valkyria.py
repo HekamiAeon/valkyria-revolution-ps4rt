@@ -104,6 +104,29 @@ def verify_bundle(bundle):
                     raise SystemExit('Bundled dependency escaped bundle: ' + line)
 
 
+OVERLAY_ASSET_NAMES = (
+    'gpu/assets/valkyria_overlay.png',
+    'gpu/assets/sounds/navigate.wav',
+    'gpu/assets/sounds/confirm.wav',
+    'gpu/assets/sounds/cancel.wav',
+    'gpu/assets/sounds/open.wav',  # optional; synthetic fallback if absent
+)
+
+
+def validate_overlay_asset(name, payload):
+    if len(payload) > 8 * 1024 * 1024:
+        raise SystemExit('Oversized overlay asset: ' + name)
+    if name.endswith('.png'):
+        if len(payload) < 24 or not payload.startswith(b'\x89PNG\r\n\x1a\n'):
+            raise SystemExit('Invalid menu portrait PNG: ' + name)
+        import struct
+        w, h = struct.unpack('>II', payload[16:24])
+        if w == 0 or h == 0 or w > 4096 or h > 4096:
+            raise SystemExit('Portrait dimensions outside 4096x4096: ' + name)
+    elif len(payload) < 12 or payload[:4] != b'RIFF' or payload[8:12] != b'WAVE' or len(payload) > 2 * 1024 * 1024:
+        raise SystemExit('Invalid menu audio WAV: ' + name)
+
+
 def source_allowed(name):
     path = PurePosixPath(name)
     # Keep internal agent instructions, development diaries and captures out of releases.
@@ -158,6 +181,11 @@ def main():
     runtime_files = dict(RUNTIME)
     if args.runtime:
         runtime_files.update({'lib/' + name: 'lib/' + name for name in LINUX_LIBRARIES})
+        # Copy precisely the media staged and tested with this specific build.
+        # Local assets are not part of Git's source archive or committed code.
+        for name in OVERLAY_ASSET_NAMES:
+            if (bundle / name).is_file():
+                runtime_files[name] = name
     runtime_files.update({name: name for name in FSR4_FILES})
     if args.preview:
         print(json.dumps({'revision': revision, 'source_files': source_files,
@@ -213,12 +241,14 @@ def main():
                 add(('source/' if args.runtime else '') + member.name, data, member.mode)
         if args.runtime:
             for dest, src in runtime_files.items():
-                path = (bundle if dest.startswith(('bin/', 'lib/')) else ROOT) / src
+                path = (bundle if dest.startswith(('bin/', 'lib/', 'gpu/assets/')) else ROOT) / src
                 if path.is_symlink() or not path.is_file():
                     raise ValueError(f'Expected regular file: {src}')
                 data = path.read_bytes()
                 if dest.startswith(('bin/', 'lib/')) and not data.startswith(b'\x7fELF'):
                     raise ValueError(f'Expected native host ELF: {src}')
+                if dest.startswith('gpu/assets/'):
+                    validate_overlay_asset(dest, data)
                 add(dest, data, 0o755 if dest.startswith('bin/') or dest.endswith('.sh') else 0o644)
         add('MANIFEST.json', (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode())
     staging.rename(target)
