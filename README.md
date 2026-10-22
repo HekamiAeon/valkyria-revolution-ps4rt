@@ -16,33 +16,32 @@ not affiliated with Sega, Sony, or AMD.
 
 ## Download and play (no compiling required)
 
-**Want to play? Use the Linux runtime archive, not the source archive. No compilation or developer container is required.**
+**Want to play? Download the prebuilt Linux release. No compilation, Podman, or separate FFmpeg/SDL3 installation required.**
 
-**Release status:** The new **glibc 2.35 portable v1.1 candidate** has passed a
-clean automated build and a local extracted-archive gameplay test on Fedora.
-It has **not yet been published** as a GitHub release. The previously published
-v1.0 binaries use a different, newer-glibc dependency baseline. When v1.1 is
-published, obtain the Linux runtime from the [releases page](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases).
-
-1. Download `valkyria-revolution-linux-x86_64-<commit>.tar.gz` from the release assets, **not** `valkyria-revolution-source-<commit>.tar.gz`.
-2. Supply your own **extracted plaintext CUSA06810 game folder** containing `eboot.bin`, `sce_sys/param.sfo`, system modules, and game data. Pass the game folder itself, **not the PKG, eboot.bin, or its parent**.
-3. Extract the download and open a terminal inside its extracted folder.
-4. Run the game:
+1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest) and download **`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`**, the player runtime. The separately named `source` archive is for developers. **v1.0 is superseded by v1.1.**
+2. **Prepare your own game:** Supply an extracted, plaintext `CUSA06810` folder with `sce_sys/param.sfo`, `eboot.bin`, required modules and game data. Point to the `CUSA06810` folder itself, **not** a PKG, the parent directory or the executable.
+3. **Extract and launch** (or use your file manager to extract, then open a terminal inside the extracted folder):
 
 ```bash
+tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
+cd valkyria-revolution-linux-x86_64-35f35f5
 bash Play-Valkyria.sh --game "/path/to/CUSA06810"
 ```
+
+**That's it.** There is no `LD_LIBRARY_PATH` setup, and no need to compile the game.
 
 Leave the extracted release folder together. Your game extraction is read
 rather than overwritten; the first launch creates local working data. Quote
 game paths containing spaces. To browse for the folder instead, run
 `bash Play-Valkyria.sh` without `--game`, if Python Tkinter is installed.
 
-**Graphics are controlled in-game.** Open the overlay with **Insert** or
-**L2 + R3 click**. It controls 1080p, 1440p, 4K output, Off / FSR 3.1 / FSR 4 v07
-upscaling, anisotropic filtering and sharpening. AF requires a restart; other
-graphics changes apply live. FSR and output-resolution command-line options
-are not required to launch the game.
+**Graphics are controlled in-game.** Press **Insert**, or hold **L2** and click
+**R3**. The illustrated wine-red overlay offers Windowed / Borderless /
+Fullscreen, 1080p / 1440p / 4K, Off / FSR 3.1 / FSR 4 v07 (when supported),
+sharpening and anisotropic filtering. D-pad navigates, Cross confirms and
+Circle cancels. No FSR or resolution arguments are required to launch.
+Only anisotropic filtering needs a game restart; display mode, output
+resolution, FSR and sharpening apply live.
 
 **Prebuilt requirements:** Linux x86-64 with **glibc 2.35 or later**, Python 3,
 a Vulkan loader, a working Vulkan driver and compatible system display/audio
