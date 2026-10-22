@@ -71,7 +71,7 @@ cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPS4RT_PGO="
     -DPS4RT_LTO="${PS4RT_LTO:-ON}" -DPS4RT_PGO_DIR="$PWD/pgo" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${PS4RT_LTO:-ON}"
 # A failed GPU build must stop here: an older libps4rtgpu.so would otherwise be used silently.
-if ! ninja -C out/gpu ps4rtgpu > out/gpu-build.log 2>&1; then
+if ! ninja -j "${PS4RT_BUILD_JOBS:-4}" -C out/gpu ps4rtgpu > out/gpu-build.log 2>&1; then
     grep -v '^\[' out/gpu-build.log | tail -40 >&2
     echo 'GPU library build failed (full log: out/gpu-build.log)' >&2; exit 1
 fi
@@ -85,12 +85,28 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
+# These extra paths are for the Ubuntu 22.04/GCC 14 release builder only.
+# Native host and Windows builds retain their original dependency handling.
+portable_link=()
+portable_cxx=()
+portable_vulkan=()
+if [[ ${PS4RT_PORTABLE_BUILD:-0} == 1 ]]; then
+    [[ -n ${CXX:-} ]] || { echo 'Portable build requires CXX' >&2; exit 1; }
+    portable_link=(-L/usr/lib/x86_64-linux-gnu
+        -Wl,-rpath-link,/opt/ps4rt-deps/lib
+        -Wl,-rpath-link,/usr/lib/x86_64-linux-gnu
+        -Wl,-rpath-link,/lib/x86_64-linux-gnu)
+    portable_cxx=("$("$CXX" -print-file-name=libstdc++.so.6)")
+    portable_vulkan=(-L/usr/lib/x86_64-linux-gnu)
+fi
+read -r -a vulkan_libraries <<< "$(pkg-config --libs vulkan)"
+
 # isa_emulate runs inside guest code: no XMM/YMM.
 "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DVALKYRIA_RUNTIME "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ps4rt-probe
-echo "Built $PWD/out/ps4rt-probe"
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DVALKYRIA_RUNTIME "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${portable_link[@]}" "${libraries[@]}" "${portable_cxx[@]}" -o out/ps4rt
+echo "Built $PWD/out/ps4rt"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
-"$CC" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/ps4rt-gpu-capabilities
+"$CC" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${portable_vulkan[@]}" "${vulkan_libraries[@]}" -o out/ps4rt-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
     ninja -C out/gpu event-flag-test valkyria-camera-test upscaler-support-test graphics-settings-test menu-input-test
     out/gpu/event-flag-test
