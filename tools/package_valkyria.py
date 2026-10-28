@@ -52,9 +52,24 @@ RUNTIME = {
     'LICENSE': 'LICENSE',
     'licenses/GPL-3.0.txt': 'docs/licenses/GPL-3.0.txt',
     'CREDITS.md': 'docs/UPSTREAM_CREDITS.md',
-    'README.md': 'docs/DISTRIBUTING_LINUX.md',
 }
 
+
+# A separate complete source archive carries docs and all developer files.
+# The player archive keeps directly relevant notices without a docs/ tree.
+PLAYER_LICENSE_FILES = (
+    'gpu/shadps4/LICENSE',
+    'gpu/third_party/fonts/LICENSE-DejaVu.txt',
+    'gpu/third_party/fsr-vulkan/LICENSE.txt',
+    'gpu/third_party/fsr-vulkan/NOTICE.md',
+    'gpu/third_party/half/LICENSE.txt',
+    'gpu/third_party/imgui/LICENSE.txt',
+    'gpu/third_party/magic_enum/LICENSE',
+    'gpu/third_party/miniz/LICENSE',
+    'gpu/third_party/sirit/LICENSE.txt',
+    'gpu/third_party/xbyak/COPYRIGHT',
+    'third_party/LibAtrac9/LICENSE',
+)
 
 LINUX_LIBRARIES = (
     'libavcodec.so.62', 'libavformat.so.62', 'libavutil.so.60',
@@ -179,6 +194,7 @@ def main():
     files = git('ls-tree', '-r', '--name-only', 'HEAD').decode().splitlines()
     source_files = [f for f in files if source_allowed(f)]
     runtime_files = dict(RUNTIME)
+    runtime_files.update({name: name for name in PLAYER_LICENSE_FILES})
     if args.runtime:
         runtime_files.update({'lib/' + name: 'lib/' + name for name in LINUX_LIBRARIES})
         # Copy precisely the media staged and tested with this specific build.
@@ -238,7 +254,10 @@ def main():
                 data = source.extractfile(member).read()
                 if is_game_code_container(member.name, data):
                     raise ValueError(f'Game-code container in source: {member.name}')
-                add(('source/' if args.runtime else '') + member.name, data, member.mode)
+                # Player archives have no embedded source tree or docs/. The
+                # separately published source archive retains these files.
+                if not args.runtime:
+                    add(member.name, data, member.mode)
         if args.runtime:
             for dest, src in runtime_files.items():
                 path = (bundle if dest.startswith(('bin/', 'lib/', 'gpu/assets/')) else ROOT) / src
@@ -250,6 +269,13 @@ def main():
                 if dest.startswith('gpu/assets/'):
                     validate_overlay_asset(dest, data)
                 add(dest, data, 0o755 if dest.startswith('bin/') or dest.endswith('.sh') else 0o644)
+        if args.runtime:
+            add('PLAYER_README.txt', (
+                'Valkyria Revolution - PS4RT Linux x86-64\\n'
+                'Run: bash Play-Valkyria.sh --game "/path/to/CUSA06810"\\n'
+                'Instructions: https://github.com/HekamiAeon/valkyria-revolution-ps4rt\\n'
+                'Requires your own plaintext extracted PS4 game. No game files included.\\n'
+            ).encode())
         add('MANIFEST.json', (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode())
     staging.rename(target)
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
