@@ -3,6 +3,7 @@
 """Launch the port using game files supplied locally by the player."""
 import argparse
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -64,6 +65,13 @@ def main(argv=None):
         print(f'Prepared locally in {data}; original files were read only.')
         return 0
     env = os.environ.copy()
+    # Always restart the same extracted game and writable data directory.
+    # Preserve optional runtime arguments without depending on the shell cwd.
+    restart = [sys.executable, str(Path(__file__).resolve()),
+               '--game', str(game), '--data-dir', str(data)]
+    if runtime_args:
+        restart += ['--', *runtime_args]
+    env['PS4RT_RESTART_COMMAND'] = shlex.join(restart)
     env.update(PS4RT_GPU_USER_DIR=str(data / 'user/gpu'), PS4RT_CONFIG=str(data / 'valkyria.ini'),
                PS4RT_CAPTURE_TRIGGER=str(data / 'next-render.request'),
                PS4RT_CAPTURE_DIR=str(data / 'captures'),
