@@ -2,34 +2,6 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
-case $(uname -s) in
-MINGW*|MSYS*)
-    # shellcheck source=msys2-env.sh
-    source ./msys2-env.sh
-    for tool in clang cmake ninja pkg-config; do
-        command -v "$tool" >/dev/null || { echo "Need $tool from MSYS2 CLANG64 (packaging/windows/README.md)." >&2; exit 1; }
-    done
-    if [[ ! -f gpu/third_party/fsr-vulkan/CMakeLists.txt || ! -f gpu/third_party/imgui/imgui.h ||
-          ! -f gpu/third_party/xbyak/xbyak/xbyak.h ]]; then
-        git submodule update --init --recursive
-    fi
-    for patch in gpu/patches/fsr-vulkan/*.patch; do
-        if ! git -C gpu/third_party/fsr-vulkan apply --reverse --check "$PWD/$patch" 2>/dev/null; then
-            git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
-        fi
-    done
-    cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPS4RT_PGO=off \
-        -DPS4RT_LTO="${PS4RT_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
-    echo "GPU library and loader: LTO ${PS4RT_LTO:-OFF}"
-    if ! ninja -C out/gpu ps4rt-probe ps4rt-gpu-capabilities ps4rt-play > out/gpu-build.log 2>&1; then
-        grep -v '^\[' out/gpu-build.log | tail -40 >&2
-        echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
-    fi
-    cp out/gpu/ps4rt-probe.exe out/gpu/ps4rt-gpu-capabilities.exe out/gpu/ps4rt-play.exe out/
-    echo "Built $PWD/out/ps4rt-probe.exe"
-    exit 0
-    ;;
-esac
 if [[ -z ${CC:-} ]]; then
     CC=$(command -v cc || command -v gcc || true)
     if [[ -z $CC ]]; then
@@ -86,7 +58,7 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
 # These extra paths are for the Ubuntu 22.04/GCC 14 release builder only.
-# Native host and Windows builds retain their original dependency handling.
+# Native host builds retain their original dependency handling.
 portable_link=()
 portable_cxx=()
 portable_vulkan=()

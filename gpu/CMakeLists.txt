@@ -63,9 +63,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
-if (NOT WIN32)
-    pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
-endif()
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 find_package(miniz QUIET)
 if (NOT miniz_FOUND)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -149,14 +147,7 @@ set(COMMON
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
-# Windows: a DLL cannot leave the runtime_* symbols for ps4rt-probe.exe to resolve, so the
-# library is static there and linked into the executable.
-if (WIN32)
-    set(PS4RTGPU_KIND STATIC)
-else()
-    set(PS4RTGPU_KIND SHARED)
-endif()
-add_library(ps4rtgpu ${PS4RTGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
+add_library(ps4rtgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
     shadps4/core/libraries/gnmdriver/gnmdriver.cpp
     shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
     shadps4/core/libraries/kernel/equeue.cpp shadps4/core/libraries/kernel/event_flag.cpp ${AVPLAYER}
@@ -176,93 +167,13 @@ target_include_directories(ps4rtgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third
 target_compile_definitions(ps4rtgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(ps4rtgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against ps4rt-probe.
-if (NOT WIN32)
-    target_link_options(ps4rtgpu PRIVATE -Wl,--allow-shlib-undefined)
-endif()
+target_link_options(ps4rtgpu PRIVATE -Wl,--allow-shlib-undefined)
 target_link_libraries(ps4rtgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(ps4rtgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 target_include_directories(ps4rtgpu PRIVATE third_party/xbyak)
-if (WIN32)
-    # Guest code is entered with the System V ABI; NOMINMAX/WIN32_LEAN_AND_MEAN keep
-    # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
-    target_compile_definitions(ps4rtgpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_compile_options(ps4rtgpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/ps4rt_win_compat.h)
-    target_link_libraries(ps4rtgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm pdh)
-else()
-    target_link_libraries(ps4rtgpu PUBLIC PkgConfig::X11)
-endif()
+target_link_libraries(ps4rtgpu PUBLIC PkgConfig::X11)
 
-# ps4rt (Windows): ps4rtgpu is a static library there, so the loader and the HLE runtime are
-# linked here, where CMake knows its dependencies (build.sh builds them with ninja).
-if (WIN32)
-    enable_language(RC)
-    file(GLOB PS4RT_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
-    file(GLOB PS4RT_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
-    add_library(atrac9 STATIC ${PS4RT_ATRAC9})
-    target_compile_options(atrac9 PRIVATE -w)
-    set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(ps4rt-probe ../src/probe.c ${PS4RT_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
-        ../src/isa_rewrite.c ../src/isa_emulate.c
-        ../packaging/windows/ps4rt-probe.rc)
-    set_target_properties(ps4rt-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(ps4rt-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
-    target_include_directories(ps4rt-probe PRIVATE .. ../src)
-    target_link_libraries(ps4rt-probe PRIVATE ps4rtgpu atrac9 onecore bcrypt ws2_32 -pthread)
-    # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
-    # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
-    target_link_options(ps4rt-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
-    # ps4rt: runtime unit tests (ninja -C out/gpu mp3-test videodec-test services-test).
-    add_executable(mp3-test EXCLUDE_FROM_ALL ../tests/test_mp3.c ../src/runtime_mp3.c ../src/compat_win.c)
-    add_executable(videodec-test EXCLUDE_FROM_ALL ../tests/test_videodec.c ../src/compat_win.c)
-    add_executable(services-test EXCLUDE_FROM_ALL ../tests/test_services.c ../src/compat_win.c)
-    foreach(test mp3-test videodec-test services-test)
-        set_target_properties(${test} PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-        target_compile_options(${test} PRIVATE -Wall -Wextra -Werror)
-        target_include_directories(${test} PRIVATE .. ../src)
-        target_link_libraries(${test} PRIVATE atrac9 PkgConfig::FFMPEG bcrypt -pthread)
-    endforeach()
-    add_executable(pad-map-test EXCLUDE_FROM_ALL ../tests/test_pad_map.c ../src/compat_win.c)
-    set_target_properties(pad-map-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(pad-map-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(pad-map-test PRIVATE .. ../src)
-    target_link_libraries(pad-map-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
-    add_executable(audio-downmix-test EXCLUDE_FROM_ALL ../tests/test_audio_downmix.c ../src/compat_win.c)
-    set_target_properties(audio-downmix-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(audio-downmix-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(audio-downmix-test PRIVATE .. ../src)
-    target_link_libraries(audio-downmix-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
-    add_executable(cpu-check-test EXCLUDE_FROM_ALL ../tests/test_cpu_check.c)
-    set_target_properties(cpu-check-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(cpu-check-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(cpu-check-test PRIVATE .. ../src)
-    # isa_emulate runs inside guest code: no XMM/YMM. The test runs the real instructions as its oracle.
-    add_executable(isa-emulate-test EXCLUDE_FROM_ALL ../tests/test_isa_emulate.c ../src/isa_emulate.c)
-    set_source_files_properties(../src/isa_emulate.c PROPERTIES COMPILE_OPTIONS "-mgeneral-regs-only")
-    set_source_files_properties(../tests/test_isa_emulate.c PROPERTIES COMPILE_OPTIONS "-mbmi;-mlzcnt;-mmovbe")
-    set_target_properties(isa-emulate-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(isa-emulate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(isa-emulate-test PRIVATE .. ../src)
-    # Stubs and patched sites run for real in an RWX region; the fixture path is the first argument.
-    add_executable(isa-stub-test EXCLUDE_FROM_ALL ../tests/test_isa_stub.c ../src/isa_rewrite.c ../src/isa_emulate.c)
-    set_source_files_properties(../tests/test_isa_stub.c PROPERTIES COMPILE_OPTIONS "-mbmi;-mlzcnt")
-    set_target_properties(isa-stub-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(isa-stub-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(isa-stub-test PRIVATE .. ../src)
-    target_link_libraries(isa-stub-test PRIVATE bcrypt -pthread)
-    add_executable(tsc-clock-test EXCLUDE_FROM_ALL ../tests/test_tsc_clock.c ../src/compat_win.c)
-    set_target_properties(tsc-clock-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(tsc-clock-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(tsc-clock-test PRIVATE .. ../src)
-    target_link_libraries(tsc-clock-test PRIVATE bcrypt -pthread)
-    add_executable(ps4rt-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/ps4rt-gpu-capabilities.rc)
-    target_include_directories(ps4rt-gpu-capabilities PRIVATE shadps4)
-    target_link_libraries(ps4rt-gpu-capabilities PRIVATE Vulkan::Vulkan)
-    # "Play PS4RT.exe": the game with the launcher's saved settings, no launcher window.
-    add_executable(ps4rt-play WIN32 ../packaging/windows/play.c ../packaging/windows/play.rc)
-    target_compile_options(ps4rt-play PRIVATE -municode)
-    target_link_options(ps4rt-play PRIVATE -municode)
-endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
 add_executable(pipeline-binary-cache-test EXCLUDE_FROM_ALL ../tests/test_pipeline_binary_cache.cpp
@@ -271,26 +182,12 @@ target_compile_definitions(pipeline-binary-cache-test PRIVATE NOMINMAX WIN32_LEA
 target_include_directories(pipeline-binary-cache-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(pipeline-binary-cache-test PRIVATE ps4rtgpu)
 target_compile_options(pipeline-binary-cache-test PRIVATE -fPIC)
-if (WIN32)
-    target_sources(pipeline-binary-cache-test PRIVATE ../src/compat_win.c)
-    target_compile_definitions(pipeline-binary-cache-test PRIVATE sigjmp_buf=ps4rt_jmp_buf)
-    target_compile_options(pipeline-binary-cache-test PRIVATE
-        -include ${CMAKE_CURRENT_SOURCE_DIR}/../src/compat_win.h)
-    target_link_libraries(pipeline-binary-cache-test PRIVATE onecore)
-endif()
 add_executable(pipeline-binary-initialization-test EXCLUDE_FROM_ALL
     ../tests/test_pipeline_binary_initialization.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_compile_definitions(pipeline-binary-initialization-test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_include_directories(pipeline-binary-initialization-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(pipeline-binary-initialization-test PRIVATE ps4rtgpu)
 target_compile_options(pipeline-binary-initialization-test PRIVATE -fPIC)
-if (WIN32)
-    target_sources(pipeline-binary-initialization-test PRIVATE ../src/compat_win.c)
-    target_compile_definitions(pipeline-binary-initialization-test PRIVATE sigjmp_buf=ps4rt_jmp_buf)
-    target_compile_options(pipeline-binary-initialization-test PRIVATE
-        -include ${CMAKE_CURRENT_SOURCE_DIR}/../src/compat_win.h)
-    target_link_libraries(pipeline-binary-initialization-test PRIVATE onecore)
-endif()
 set_source_files_properties(../tests/test_pipeline_binary_cache.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
