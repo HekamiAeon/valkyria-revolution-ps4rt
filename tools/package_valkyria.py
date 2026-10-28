@@ -271,10 +271,10 @@ def main():
                 add(dest, data, 0o755 if dest.startswith('bin/') or dest.endswith('.sh') else 0o644)
         if args.runtime:
             add('PLAYER_README.txt', (
-                'Valkyria Revolution - PS4RT Linux x86-64\\n'
-                'Run: bash Play-Valkyria.sh --game "/path/to/CUSA06810"\\n'
-                'Instructions: https://github.com/HekamiAeon/valkyria-revolution-ps4rt\\n'
-                'Requires your own plaintext extracted PS4 game. No game files included.\\n'
+                'Valkyria Revolution - PS4RT Linux x86-64\n'
+                'Run: bash Play-Valkyria.sh --game "/path/to/CUSA06810"\n'
+                'Instructions: https://github.com/HekamiAeon/valkyria-revolution-ps4rt\n'
+                'Requires your own plaintext extracted PS4 game. No game files included.\n'
             ).encode())
         add('MANIFEST.json', (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode())
     staging.rename(target)
