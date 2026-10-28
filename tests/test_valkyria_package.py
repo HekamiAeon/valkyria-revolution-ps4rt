@@ -49,9 +49,12 @@ class PackageBoundary(unittest.TestCase):
 
     def test_runtime_copies_only_named_host_binaries(self):
         binaries = {dest: src for dest, src in package.RUNTIME.items()
-                    if src.startswith('out/')}
-        self.assertEqual(binaries, {'bin/ps4rt-probe': 'out/ps4rt-probe',
-            'bin/gpu/libps4rtgpu.so': 'out/gpu/libps4rtgpu.so'})
+                    if dest.startswith('bin/')}
+        self.assertEqual(binaries, {
+            'bin/ps4rt': 'bin/ps4rt',
+            'bin/ps4rt-gpu-capabilities': 'bin/ps4rt-gpu-capabilities',
+            'bin/gpu/libps4rtgpu.so': 'bin/gpu/libps4rtgpu.so',
+        })
         for src in package.RUNTIME.values():
             self.assertNotIn('out/valkyria', src)
             self.assertNotIn('original', Path(src).parts)
