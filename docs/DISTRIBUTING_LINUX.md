@@ -79,7 +79,7 @@ python3 tools/package_valkyria.py --runtime --bundle-from "$BUNDLE"
 
 The source and Linux x86-64 archives keep the original filenames and commit suffix. Runtime packaging uses an allowlist of **three tested ELF files** (`bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, and `bin/ps4rt-gpu-capabilities`) and twelve audited shared libraries from the tested build. The corresponding PS4RT source is provided separately in the source archive. The player archive includes reviewed overlay media from the tested build bundle. It excludes game files, linked game code, saves and GPU caches.
 
-See [`packaging/linux/README.md`](../packaging/linux/README.md) for build stages, `$ORIGIN` path validation and glibc requirements. Before future public binary redistribution, complete the third-party [license/source review](../packaging/linux/THIRD_PARTY_REVIEW.md) and verify redistribution rights for the included overlay portrait and sounds. Independent Steam Deck testing is still pending.
+See [`packaging/linux/README.md`](../packaging/linux/README.md) for build stages, `$ORIGIN` path validation and glibc requirements, and [upstream credits and notices](UPSTREAM_CREDITS.md) for licensing and attribution. Independent Steam Deck testing is still pending.
 
 ### License and provenance
 
