@@ -11,21 +11,6 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def choose_game(previous):
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        window = tk.Tk()
-        window.withdraw()
-        selected = filedialog.askdirectory(
-            title='Select your extracted Valkyria Revolution folder (CUSA06810)',
-            initialdir=previous if previous else None, parent=window)
-        window.destroy()
-        return selected
-    except Exception as error:
-        raise ValueError('Pass --game /path/to/CUSA06810 (folder chooser unavailable)') from error
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game', help='Your extracted, plaintext CUSA06810 game folder')
@@ -44,12 +29,17 @@ def main(argv=None):
     selected = args.game or os.environ.get('VALKYRIA_GAME_DIR') or previous
     if not selected and not packaged and (ROOT.parent / 'original/CUSA06810').is_dir():
         selected = str(ROOT.parent / 'original/CUSA06810')
-    selected = selected or choose_game(previous)
     if not selected:
-        return 0
+        raise ValueError('Game folder not configured. First launch: '
+                         'bash Play-Game.sh --game "/absolute/path/to/CUSA06810"')
     game = Path(selected).expanduser().resolve()
+    if not game.is_dir():
+        raise ValueError(f'Game folder not found: {game}. Supply --game /path/to/CUSA06810')
+    param_sfo = game / 'sce_sys/param.sfo'
+    if not param_sfo.is_file():
+        raise ValueError(f'Missing sce_sys/param.sfo in game folder: {game}')
     from prepare import sfo
-    metadata = sfo((game / 'sce_sys/param.sfo').read_bytes())
+    metadata = sfo(param_sfo.read_bytes())
     if metadata.get('TITLE_ID') != 'CUSA06810':
         raise ValueError('This port requires CUSA06810; select that extracted game folder')
     if not binary.is_file():
