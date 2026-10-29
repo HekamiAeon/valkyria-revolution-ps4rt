@@ -42,6 +42,7 @@ SYNTHETIC_FIXTURES = {
 }
 GAME_CONTAINER_PREFIXES = (b'PS4RTB', b'PS4RTP', b'PS4RTC', b'PS4RTI', b'O\x15=\x1d')
 RUNTIME = {
+    'Play-Game.sh': 'packaging/linux/Play-Game.sh',
     'Play-Valkyria.sh': 'packaging/linux/Play-Valkyria.sh',
     'bin/ps4rt': 'bin/ps4rt',
     'bin/ps4rt-gpu-capabilities': 'bin/ps4rt-gpu-capabilities',
@@ -282,7 +283,8 @@ def main():
         if args.runtime:
             add('PLAYER_README.txt', (
                 'Valkyria Revolution - PS4RT Linux x86-64\n'
-                'Run: bash Play-Valkyria.sh --game "/path/to/CUSA06810"\n'
+                'First launch: bash Play-Game.sh --game "/path/to/CUSA06810"\n'
+                'Later launches: bash Play-Game.sh (saved game directory)\n'
                 'Instructions: https://github.com/HekamiAeon/valkyria-revolution-ps4rt\n'
                 'Requires your own plaintext extracted PS4 game. No game files included.\n'
             ).encode())
