@@ -34,7 +34,8 @@ class PlayerReleaseLayoutTests(unittest.TestCase):
         self.assertIn('CREDITS.md', player)
         self.assertIn('licenses/GPL-3.0.txt', player)
         self.assertIn('gpu/third_party/imgui/LICENSE.txt', player)
-        self.assertIn('Play-Valkyria.sh', player)
+        self.assertIn('Play-Game.sh', player)
+        self.assertIn('Play-Valkyria.sh', player)  # compatibility alias
         self.assertNotIn('README.md', player)
         self.assertTrue(all(not x.startswith(('docs/', 'source/')) for x in player), player)
 
@@ -43,6 +44,8 @@ class PlayerReleaseLayoutTests(unittest.TestCase):
         self.assertIn("add('PLAYER_README.txt'", s)
         self.assertIn('github.com/HekamiAeon/valkyria-revolution-ps4rt', s)
         self.assertIn('if not args.runtime:', s)
+        self.assertIn('First launch: bash Play-Game.sh', s)
+        self.assertIn('Later launches: bash Play-Game.sh', s)
 
 
 if __name__ == '__main__':
