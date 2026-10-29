@@ -21,6 +21,12 @@ FSR4_LOCK = load_lock(ROOT)
 FSR4_FILES = FSR4_LOCK['files']
 SOURCE_DIRS = {'src', 'gpu', 'third_party', 'scripts', 'tools', 'tests', 'docs',
                'packaging', 'patches', 'launcher', '.github'}
+PUBLIC_DOCS = {
+    'docs/RUNNING_LINUX.md', 'docs/DISTRIBUTING_LINUX.md',
+    'docs/UPSTREAM_CREDITS.md', 'docs/LINUX_BINARY_RELEASE.md',
+}
+# The public README uses this single reviewed gameplay screenshot.
+PUBLIC_MEDIA = {'docs/images/readme/gameplay.png'}
 SOURCE_FILES = {'LICENSE', 'README.md', 'build.sh',
                 'build-headless.sh', 'run-valkyria.sh', 'run.py', 'run.sh',
                 'shell.nix', 'flake.nix', 'flake.lock', '.gitignore', '.gitmodules',
@@ -152,6 +158,10 @@ def source_allowed(name):
         return False
     if name.startswith(('PUBLIC_EXPORT_MANIFEST', 'docs/upstream/SOURCE_EXPORT_MANIFEST')):
         return False
+    # Match Sakura's public-doc allowlist; never archive an arbitrary docs/ tree.
+    if name.startswith('docs/'):
+        return (name in PUBLIC_DOCS or name in PUBLIC_MEDIA or
+                name.startswith('docs/licenses/'))
     if not path.parts or path.is_absolute() or '..' in path.parts or name in EXCLUDED:
         return False
     # The only allowed external shader/model assets are listed in the pinned lock.
@@ -197,8 +207,7 @@ def main():
     runtime_files.update({name: name for name in PLAYER_LICENSE_FILES})
     if args.runtime:
         runtime_files.update({'lib/' + name: 'lib/' + name for name in LINUX_LIBRARIES})
-        # Copy precisely the media staged and tested with this specific build.
-        # Local assets are not part of Git's source archive or committed code.
+        # Copy precisely the committed media staged and tested with this build.
         for name in OVERLAY_ASSET_NAMES:
             if (bundle / name).is_file():
                 runtime_files[name] = name

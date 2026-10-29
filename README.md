@@ -14,6 +14,8 @@ your own extracted, plaintext CUSA06810 game folder. The launcher does not
 download games, decrypt encrypted packages, or connect to PSN. This project is
 not affiliated with Sega, Sony, or AMD.
 
+![Valkyria Revolution running on Linux with PS4RT](docs/images/readme/gameplay.png)
+
 ## Download and play (no compiling required)
 
 **Want to play? Download the prebuilt Linux release. No compilation, Podman, or separate FFmpeg/SDL3 installation required.**

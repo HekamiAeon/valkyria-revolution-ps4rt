@@ -36,6 +36,21 @@ class PackageBoundary(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(package.source_allowed(name))
 
+    def test_public_docs_are_explicitly_allowlisted(self):
+        for name in (*package.PUBLIC_DOCS, *package.PUBLIC_MEDIA, 'docs/licenses/GPL-3.0.txt'):
+            with self.subTest(allowed=name):
+                self.assertTrue(package.source_allowed(name))
+        for name in ('docs/notes.txt', 'docs/images/readme/private.png',
+                     'docs/images/other.png', 'docs/agents/secret.md',
+                     'docs/images/readme/.gitkeep'):
+            with self.subTest(rejected=name):
+                self.assertFalse(package.source_allowed(name))
+
+    def test_player_archive_has_no_docs_folder(self):
+        self.assertFalse(any(dest.startswith('docs/') for dest in package.RUNTIME))
+        self.assertFalse(any(dest.startswith('docs/') for dest in package.PLAYER_LICENSE_FILES))
+        self.assertFalse(any(dest.startswith('docs/') for dest in package.OVERLAY_ASSET_NAMES))
+
     def test_binary_container_boundary(self):
         fixture_name = 'tests/data/isa_fixture.bin'
         fixture = (Path(__file__).resolve().parents[1] / fixture_name).read_bytes()

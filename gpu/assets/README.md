@@ -1,6 +1,6 @@
-# Valkyria overlay media placeholders
+# Valkyria overlay media
 
-The folders are intentionally empty in Git. Place media files locally:
+Only the reviewed overlay files listed below are tracked in Git:
 
 - `gpu/assets/valkyria_overlay.png`: portrait for the **inside** of the
   translucent wine-red menu. Max 4096x4096 PNG.
@@ -14,10 +14,11 @@ The already supplied Valkyria recordings can be renamed:
 `Valkyria_Confirm.wav` → `confirm.wav`,
 `Valkyria_Cancel.wav` → `cancel.wav`.
 
-PNG and WAV media are ignored by Git. The clean build copies them from this
-folder into the staged test bundle. The runtime packager copies them from
-that tested bundle into the downloadable archive, with file hashes in
-`MANIFEST.json`. The source archive contains only code and these instructions.
+The clean build copies these files from its committed-source snapshot into
+the staged test bundle. The runtime packager copies them from that verified
+bundle into the player archive, with hashes in `MANIFEST.json`. The sanitized
+source archive contains the tracked media as well. Other local artwork and
+audio are not exported.
 
 Verify provenance and permission to redistribute game-derived art/audio
 before publishing any binary release that includes these files.
