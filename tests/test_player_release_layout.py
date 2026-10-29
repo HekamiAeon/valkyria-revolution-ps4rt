@@ -44,8 +44,12 @@ class PlayerReleaseLayoutTests(unittest.TestCase):
         self.assertIn("add('PLAYER_README.txt'", s)
         self.assertIn('github.com/HekamiAeon/valkyria-revolution-ps4rt', s)
         self.assertIn('if not args.runtime:', s)
-        self.assertIn('First launch: bash Play-Game.sh', s)
-        self.assertIn('Later launches: bash Play-Game.sh', s)
+        self.assertIn("ROOT / 'packaging/linux/PLAYER_README.txt'", s)
+        readme = (Path(__file__).resolve().parents[1] / 'packaging/linux/PLAYER_README.txt').read_text()
+        self.assertIn('bash Play-Game.sh --game', readme)
+        self.assertIn('bash Play-Game.sh', readme)
+        build = (Path(__file__).resolve().parents[1] / 'packaging/linux/build-runtime.sh').read_text()
+        self.assertIn('PLAYER_README.txt', build)
 
 
 if __name__ == '__main__':
