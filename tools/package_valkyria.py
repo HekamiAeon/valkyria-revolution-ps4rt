@@ -281,13 +281,9 @@ def main():
                     validate_overlay_asset(dest, data)
                 add(dest, data, 0o755 if dest.startswith('bin/') or dest.endswith('.sh') else 0o644)
         if args.runtime:
-            add('PLAYER_README.txt', (
-                'Valkyria Revolution - PS4RT Linux x86-64\n'
-                'First launch: bash Play-Game.sh --game "/path/to/CUSA06810"\n'
-                'Later launches: bash Play-Game.sh (saved game directory)\n'
-                'Instructions: https://github.com/HekamiAeon/valkyria-revolution-ps4rt\n'
-                'Requires your own plaintext extracted PS4 game. No game files included.\n'
-            ).encode())
+            # The same reviewed quick-start ships in the isolated build bundle.
+            # Package from committed source, not an arbitrary developer-generated file.
+            add('PLAYER_README.txt', (ROOT / 'packaging/linux/PLAYER_README.txt').read_bytes())
         add('MANIFEST.json', (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode())
     staging.rename(target)
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
