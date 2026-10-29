@@ -121,10 +121,10 @@ cp -a -- "$SOURCE/packaging/linux/Play-Valkyria.sh" "$STAGE/"
 cp -a -- "$SOURCE/LICENSE" "$STAGE/"
 cp -a -- "$SOURCE/fsr4_shaders" "$STAGE/"
 
-# Media is deliberately local-only (not in the Git archive). Copy only the
-# allowlisted files the developer placed in gpu/assets, never arbitrary media.
+# Overlay media comes from the same committed source snapshot as the binary.
+# Only these reviewed names are staged, never arbitrary or untracked local media.
 # Missing files are fine: the menu uses a clean theme and synthesized cues.
-ASSET_ROOT="$ROOT/gpu/assets"
+ASSET_ROOT="$SOURCE/gpu/assets"
 mkdir -p "$STAGE/gpu/assets/sounds"
 for name in valkyria_overlay.png; do
   if [[ -f "$ASSET_ROOT/$name" && ! -L "$ASSET_ROOT/$name" ]]; then

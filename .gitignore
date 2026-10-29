@@ -7,6 +7,9 @@ ps4rt.ini
 fsr4_shaders/*
 pgo/
 *.png
+# Reviewed in-game overlay and README screenshot are public assets.
+!/gpu/assets/valkyria_overlay.png
+!/docs/images/readme/gameplay.png
 last_run.log
 dist/
 packaging/runtime-paths.nix
@@ -57,5 +60,9 @@ CLAUDE.md
 *.tar.gz
 *.zip
 
-# Locally provided overlay artwork and audio; never commit these media files.
+# Only explicitly named overlay sounds may be committed.
 /gpu/assets/sounds/*.wav
+!/gpu/assets/sounds/navigate.wav
+!/gpu/assets/sounds/confirm.wav
+!/gpu/assets/sounds/cancel.wav
+!/gpu/assets/sounds/open.wav

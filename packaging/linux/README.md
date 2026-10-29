@@ -27,7 +27,7 @@ The source and runtime archives keep the existing
 `valkyria-revolution-source-<commit>.tar.gz` names, each with a
 `.sha256` companion. Bundled runtime includes `bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, `bin/ps4rt-gpu-capabilities`, and 12 audited shared libraries. Library lookup uses relative `$ORIGIN` paths. Keep host glibc 2.35+, Python 3, and a working Vulkan driver.
 
-`Play-Valkyria.sh`, the CUSA06810 folder selector, and `--data-dir` behavior are unchanged. Windows retains its original CMake target.
+`Play-Valkyria.sh`, the CUSA06810 folder selector, and `--data-dir` behavior are unchanged. The old Windows build entry points have been removed; Linux is the supported target.
 
 The final builder image includes **PNG-enabled FFmpeg**, needed for in-game
 thumbnail decoding. Earlier image stages without that decoder must not be
@@ -39,10 +39,9 @@ review documented in `packaging/linux/THIRD_PARTY_REVIEW.md`. Do not put game fi
 
 **Release workflow:** validate the built bundle, build the exact committed-source archive, test the freshly extracted archive, then publish separately. v1.0 is retained as a superseded historical release; v1.1 is the recommended download.
 
-## Optional local overlay artwork and audio
+## Tracked overlay artwork and audio
 
-The committed source contains **empty placeholder directories**. Put your own
-media locally at the following paths relative to the Valkyria repo root:
+The reviewed player media files are tracked in the repository at these paths:
 
 ```text
 gpu/assets/valkyria_overlay.png
@@ -60,11 +59,17 @@ existed and is now available in Valkyria's compact graphics page.
 
 The recorded files must be ordinary RIFF WAV files under 2 MiB each.
 The portrait should be PNG, maximum 4096x4096. The build script copies
-only these named local files into the isolated test bundle; the runtime exporter
-then includes only the files in that *same staged bundle*. These local media
-files are git-ignored and are never included in the corresponding source archive.
-The executable still works without them.
+only these named files from the committed source snapshot into the isolated
+build bundle; the runtime exporter includes only media from that tested bundle.
+The public source archive also includes the tracked media, so a clean clone can
+reproduce the player's overlay. The executable still works without them.
 
-**Before publishing a runtime archive containing the media, review distribution
-rights, attributions and any required permission.** The packaging step verifies
-format/size, not copyright or ownership.
+**Before committing or publishing artwork or audio, verify redistribution rights,
+attributions and any required permission.** The packaging step verifies format/size,
+not copyright or ownership.
+
+The **player archive excludes the entire `docs/` tree**, with only required
+license/credit files copied to top-level `licenses/` and `CREDITS.md`. The
+source archive includes a fixed allowlist of public guides, licenses, and the
+single README screenshot at `docs/images/readme/gameplay.png`; other files in
+`docs/` are not exported.
