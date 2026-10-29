@@ -50,8 +50,9 @@ class PlayerLauncherTests(unittest.TestCase):
         return (self.data / 'game-folder.txt').read_text().strip()
 
     def test_missing_path_explains_first_launch_without_picker(self):
-        with self.assertRaisesRegex(ValueError, 'Play-Game.sh --game'):
+        with self.assertRaisesRegex(ValueError, 'Play-Game.sh --game') as caught:
             self.invoke()
+        self.assertIn('Refer to PLAYER_README.txt for details.', str(caught.exception))
         self.assertFalse((self.data / 'game-folder.txt').exists())
         source = (ROOT / 'scripts/valkyria_launch.py').read_text()
         self.assertNotIn('tkinter', source)
