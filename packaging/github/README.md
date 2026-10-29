@@ -4,16 +4,16 @@
 [repository README](../../README.md), [Running on Linux](../../docs/RUNNING_LINUX.md)
 and [Linux distribution guide](../../docs/DISTRIBUTING_LINUX.md).
 
-**Players:** Download **`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`** from the
-[latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest), not the developer source archive.
+**Players:** Download **`valkyria-revolution-linux-x86_64-d29d542.tar.gz`** from the
+[latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2), not the developer source archive.
 
 ```bash
-tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
-cd valkyria-revolution-linux-x86_64-35f35f5
-bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+tar -xzf valkyria-revolution-linux-x86_64-d29d542.tar.gz
+cd valkyria-revolution-linux-x86_64-d29d542
+bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
 
-Supply your own extracted, plaintext `CUSA06810` folder. The v1.1 runtime
+On later launches, use `bash Play-Game.sh` without `--game` to reuse the remembered folder. Supply your own extracted, plaintext `CUSA06810` folder. The v1.2 runtime
 includes the twelve required application libraries, including FFmpeg 8 and SDL3.
 No compiler, Podman or `LD_LIBRARY_PATH` setup is needed. glibc 2.35+, Python 3,
 native x86-64 Linux and a compatible host Vulkan stack are required.

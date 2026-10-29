@@ -6,15 +6,17 @@ This document explains how to build and distribute the **Valkyria Revolution PS4
 
 ## For players: download, extract, run
 
-**Do not compile from source to play v1.1.** Download the Linux runtime archive from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest). Choose `valkyria-revolution-linux-x86_64-35f35f5.tar.gz`, not the source archive.
+**Do not compile from source to play v1.2.** Download the Linux runtime archive from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2). Choose `valkyria-revolution-linux-x86_64-d29d542.tar.gz`, not the source archive.
 
 Extract the download and open a terminal in the extracted folder:
 
 ```bash
-tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
-cd valkyria-revolution-linux-x86_64-35f35f5
-bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+tar -xzf valkyria-revolution-linux-x86_64-d29d542.tar.gz
+cd valkyria-revolution-linux-x86_64-d29d542
+bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
+
+Subsequent launches can use `bash Play-Game.sh` without `--game`; the launcher remembers the validated game location. Use `--game` again if the folder moves.
 
 Replace `/path/to/CUSA06810` with the path to **your extracted plaintext game folder**. It must contain `sce_sys/param.sfo`, `eboot.bin`, `sce_module/`, and game data. Do not supply the PKG, an executable file, or the parent folder.
 
@@ -41,7 +43,7 @@ Open the illustrated wine-red in-game menu with **Insert**, or press **L2 + R3 c
 
 The compact menu offers **Windowed / Borderless / Fullscreen** display modes; 1080p, 1440p, or 4K output; Off / Original, FSR 3.1, or FSR 4 v07; sharpening; and anisotropic filtering (Game default / 2× / 4× / 8× / 16×). **AF requires a restart**; window mode, resolution, upscaling, and sharpening apply live. Valkyria does **not** include a Sync/Async shader compilation toggle.
 
-The game retains its original frame-rate behavior. Display reconstruction to 4K does not mean the original 1080p scene is natively rasterized at 4K. The in-game overlay uses an illustrated portrait within a translucent wine-red panel, with recorded menu sounds in v1.1.
+The game retains its original frame-rate behavior. Display reconstruction to 4K does not mean the original 1080p scene is natively rasterized at 4K. The in-game overlay uses an illustrated portrait within a translucent wine-red panel, with recorded menu sounds in v1.2.
 
 The FSR 3.1 implementation and the bundled, checksum-recorded **FSR 4 v07** resources are part of the source distribution. The `fsr4_shaders/` assets, their license notice, and `packaging/fsr4-v07-assets.json` **must remain with a release that supports FSR 4**. FSR 4 requires suitable Vulkan device capabilities and falls back to FSR 3.1 if unsupported. This release is not FSR 4.1.1.
 
@@ -75,7 +77,7 @@ python3 tools/package_valkyria.py --runtime --bundle-from "$BUNDLE"
 (cd out/community && sha256sum -c *.sha256)
 ~~~
 
-The source and Linux x86-64 archives keep the original filenames and commit suffix. Runtime packaging uses an allowlist of **three tested ELF files** (`bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, and `bin/ps4rt-gpu-capabilities`) and twelve audited shared libraries from the tested build. The exporter includes corresponding PS4RT source under `source/`, plus reviewed overlay media bundled separately from the committed source. It excludes game files, linked game code, saves and GPU caches.
+The source and Linux x86-64 archives keep the original filenames and commit suffix. Runtime packaging uses an allowlist of **three tested ELF files** (`bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, and `bin/ps4rt-gpu-capabilities`) and twelve audited shared libraries from the tested build. The corresponding PS4RT source is provided separately in the source archive. The player archive includes reviewed overlay media from the tested build bundle. It excludes game files, linked game code, saves and GPU caches.
 
 See [`packaging/linux/README.md`](../packaging/linux/README.md) for build stages, `$ORIGIN` path validation and glibc requirements. Before future public binary redistribution, complete the third-party [license/source review](../packaging/linux/THIRD_PARTY_REVIEW.md) and verify redistribution rights for the included overlay portrait and sounds. Independent Steam Deck testing is still pending.
 
