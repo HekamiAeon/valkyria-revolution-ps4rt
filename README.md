@@ -20,22 +20,23 @@ not affiliated with Sega, Sony, or AMD.
 
 **Want to play? Download the prebuilt Linux release. No compilation, Podman, or separate FFmpeg/SDL3 installation required.**
 
-1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest) and download **`valkyria-revolution-linux-x86_64-35f35f5.tar.gz`**, the player runtime. The separately named `source` archive is for developers. **v1.0 is superseded by v1.1.**
+1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest) and download the updated v1.1 **`linux-x86_64`** player archive. The separately named `source` archive is for developers. **v1.0 is superseded by v1.1.**
 2. **Prepare your own game:** Supply an extracted, plaintext `CUSA06810` folder with `sce_sys/param.sfo`, `eboot.bin`, required modules and game data. Point to the `CUSA06810` folder itself, **not** a PKG, the parent directory or the executable.
-3. **Extract and launch** (or use your file manager to extract, then open a terminal inside the extracted folder):
+3. **Extract the player archive** with your file manager, then open a terminal inside its extracted folder. On the first launch, supply your extracted game path:
 
 ```bash
-tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
-cd valkyria-revolution-linux-x86_64-35f35f5
-bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
+
+On later launches, the validated game folder is remembered, so run `bash Play-Game.sh` without an argument. Explicit `--game` always takes priority and updates the remembered location. `Play-Valkyria.sh` remains as a compatibility alias for existing shortcuts.
 
 **That's it.** There is no `LD_LIBRARY_PATH` setup, and no need to compile the game.
 
 Leave the extracted release folder together. Your game extraction is read
 rather than overwritten; the first launch creates local working data. Quote
-game paths containing spaces. To browse for the folder instead, run
-`bash Play-Valkyria.sh` without `--game`, if Python Tkinter is installed.
+game paths containing spaces. If no valid game folder has been supplied or
+remembered, the launcher prints an example `--game` command and exits. No
+graphical folder picker or Tkinter installation is needed.
 
 **Graphics are controlled in-game.** Press **Insert**, or hold **L2** and click
 **R3**. The illustrated wine-red overlay offers Windowed / Borderless /
@@ -131,7 +132,7 @@ PS4RT_KEY_MAP="cross=Q,triangle=Space" \
 ```
 
 For the prebuilt archive, use the same variable before
-`bash Play-Valkyria.sh --game /path/to/your/CUSA06810`.
+`bash Play-Game.sh --game /path/to/your/CUSA06810`.
 `PS4RT_PAD_MAP` similarly remaps gamepad buttons. These are launch-time
 environment variables, **not keys in `valkyria.ini`**; there is currently no
 in-game key-binding editor. Default mappings and keyboard stick axes are
