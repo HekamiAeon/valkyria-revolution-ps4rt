@@ -33,9 +33,7 @@ The final builder image includes **PNG-enabled FFmpeg**, needed for in-game
 thumbnail decoding. Earlier image stages without that decoder must not be
 used for release bundles.
 
-The image recipes are not bit-for-bit reproducible because some toolchain packages are not pinned to exact build artifacts. SteamOS remains unverified; gameplay testing was on Fedora. The [v1.2 release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2) is the recommended release once published. Maintainers should complete
-any outstanding bundled-library notice/matching-source and overlay-media rights
-review documented in `packaging/linux/THIRD_PARTY_REVIEW.md`. Do not put game files, prepared executables, user saves, shaders, captures, or firmware into published archives.
+The image recipes are not bit-for-bit reproducible because some toolchain packages are not pinned to exact build artifacts. SteamOS remains unverified; gameplay testing was on Fedora. The [v1.2 release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2) is the current recommended download. Do not put game files, prepared executables, user saves, shaders, captures, or firmware into published archives. See [upstream credits and notices](../../docs/UPSTREAM_CREDITS.md) for attribution and licensing information.
 
 **Release workflow:** validate the built bundle, build the exact committed-source archive, test the freshly extracted archive, then publish separately. v1.0 and v1.1 are retained as superseded historical releases; v1.2 is the recommended download.
 
