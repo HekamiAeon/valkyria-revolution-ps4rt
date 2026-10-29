@@ -37,12 +37,13 @@ class PackageBoundary(unittest.TestCase):
                 self.assertFalse(package.source_allowed(name))
 
     def test_public_docs_are_explicitly_allowlisted(self):
-        for name in (*package.PUBLIC_DOCS, *package.PUBLIC_MEDIA, 'docs/licenses/GPL-3.0.txt'):
+        for name in (*package.PUBLIC_DOCS, *package.PUBLIC_MEDIA, *package.PUBLIC_DOC_LICENSES):
             with self.subTest(allowed=name):
                 self.assertTrue(package.source_allowed(name))
         for name in ('docs/notes.txt', 'docs/images/readme/private.png',
                      'docs/images/other.png', 'docs/agents/secret.md',
-                     'docs/images/readme/.gitkeep'):
+                     'docs/images/readme/.gitkeep',
+                     'docs/licenses/unreviewed.pdf', 'docs/licenses/game.bin'):
             with self.subTest(rejected=name):
                 self.assertFalse(package.source_allowed(name))
 

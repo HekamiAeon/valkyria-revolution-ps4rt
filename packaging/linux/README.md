@@ -70,6 +70,6 @@ not copyright or ownership.
 
 The **player archive excludes the entire `docs/` tree**, with only required
 license/credit files copied to top-level `licenses/` and `CREDITS.md`. The
-source archive includes a fixed allowlist of public guides, licenses, and the
+source archive includes a fixed allowlist of public guides, the reviewed GPL notice, and the
 single README screenshot at `docs/images/readme/gameplay.png`; other files in
 `docs/` are not exported.
