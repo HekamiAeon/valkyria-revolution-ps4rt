@@ -31,7 +31,8 @@ def main(argv=None):
         selected = str(ROOT.parent / 'original/CUSA06810')
     if not selected:
         raise ValueError('Game folder not configured. First launch: '
-                         'bash Play-Game.sh --game "/absolute/path/to/CUSA06810"')
+                         'bash Play-Game.sh --game "/absolute/path/to/CUSA06810"\n'
+                         'Refer to PLAYER_README.txt for details.')
     game = Path(selected).expanduser().resolve()
     if not game.is_dir():
         raise ValueError(f'Game folder not found: {game}. Supply --game /path/to/CUSA06810')
