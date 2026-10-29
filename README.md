@@ -28,7 +28,9 @@ not affiliated with Sega, Sony, or AMD.
 bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
 
-On later launches, the validated game folder is remembered, so run `bash Play-Game.sh` without an argument. Explicit `--game` always takes priority and updates the remembered location. `Play-Valkyria.sh` remains as a compatibility alias for existing shortcuts.
+On later launches, the validated game folder is remembered, so run `bash Play-Game.sh` without an argument. Explicit `--game` always takes priority and updates the remembered location. 
+
+the shortcut command `Play-Valkyria.sh` from previous versions remains as a compatibility alias for existing shortcuts.
 
 **That's it.** There is no `LD_LIBRARY_PATH` setup, and no need to compile the game.
 
