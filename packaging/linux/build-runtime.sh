@@ -117,7 +117,7 @@ fi
 # Game-derived files will be generated ONLY inside $STAGE/out/<CUSAxxxxx> if
 # the developer explicitly launches this stage for a smoke test.
 cp -a -- "$SOURCE/scripts" "$STAGE/"
-cp -a -- "$SOURCE/packaging/linux/Play-Valkyria.sh" "$STAGE/"
+cp -a -- "$SOURCE/packaging/linux/Play-Game.sh" "$SOURCE/packaging/linux/Play-Valkyria.sh" "$STAGE/"
 cp -a -- "$SOURCE/LICENSE" "$STAGE/"
 cp -a -- "$SOURCE/fsr4_shaders" "$STAGE/"
 
