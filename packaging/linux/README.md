@@ -27,7 +27,7 @@ The source and runtime archives keep the existing
 `valkyria-revolution-source-<commit>.tar.gz` names, each with a
 `.sha256` companion. Bundled runtime includes `bin/ps4rt`, `bin/gpu/libps4rtgpu.so`, `bin/ps4rt-gpu-capabilities`, and 12 audited shared libraries. Library lookup uses relative `$ORIGIN` paths. Keep host glibc 2.35+, Python 3, and a working Vulkan driver.
 
-`Play-Valkyria.sh`, the CUSA06810 folder selector, and `--data-dir` behavior are unchanged. The old Windows build entry points have been removed; Linux is the supported target.
+`Play-Game.sh` is the canonical player launcher, with `Play-Valkyria.sh` retained as a compatibility alias. First launch: `bash Play-Game.sh --game "/absolute/path/to/CUSA06810"`. After a valid first launch, `bash Play-Game.sh` uses the remembered folder. An explicit `--game` always overrides and updates that path. No Tkinter or graphical folder picker is used. Existing `--data-dir`, save files, restart logic and preparation behavior remain unchanged. The old Windows build entry points have been removed; Linux is the supported target.
 
 The final builder image includes **PNG-enabled FFmpeg**, needed for in-game
 thumbnail decoding. Earlier image stages without that decoder must not be
