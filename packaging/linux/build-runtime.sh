@@ -119,6 +119,7 @@ fi
 cp -a -- "$SOURCE/scripts" "$STAGE/"
 cp -a -- "$SOURCE/packaging/linux/Play-Game.sh" "$SOURCE/packaging/linux/Play-Valkyria.sh" "$STAGE/"
 cp -a -- "$SOURCE/LICENSE" "$STAGE/"
+cp -a -- "$SOURCE/packaging/linux/PLAYER_README.txt" "$STAGE/PLAYER_README.txt"
 cp -a -- "$SOURCE/fsr4_shaders" "$STAGE/"
 
 # Overlay media comes from the same committed source snapshot as the binary.
