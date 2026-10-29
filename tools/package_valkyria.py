@@ -27,6 +27,7 @@ PUBLIC_DOCS = {
 }
 # The public README uses this single reviewed gameplay screenshot.
 PUBLIC_MEDIA = {'docs/images/readme/gameplay.png'}
+PUBLIC_DOC_LICENSES = {'docs/licenses/GPL-3.0.txt'}
 SOURCE_FILES = {'LICENSE', 'README.md', 'build.sh',
                 'build-headless.sh', 'run-valkyria.sh', 'run.py', 'run.sh',
                 'shell.nix', 'flake.nix', 'flake.lock', '.gitignore', '.gitmodules',
@@ -159,9 +160,9 @@ def source_allowed(name):
     if name.startswith(('PUBLIC_EXPORT_MANIFEST', 'docs/upstream/SOURCE_EXPORT_MANIFEST')):
         return False
     # Match Sakura's public-doc allowlist; never archive an arbitrary docs/ tree.
-    if name.startswith('docs/'):
-        return (name in PUBLIC_DOCS or name in PUBLIC_MEDIA or
-                name.startswith('docs/licenses/'))
+    if name.startswith('docs/') and name not in (
+            PUBLIC_DOCS | PUBLIC_MEDIA | PUBLIC_DOC_LICENSES):
+        return False
     if not path.parts or path.is_absolute() or '..' in path.parts or name in EXCLUDED:
         return False
     # The only allowed external shader/model assets are listed in the pinned lock.
