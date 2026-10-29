@@ -4,19 +4,21 @@ This is an experimental, game-specific native x86-64 Linux compatibility runtime
 
 You must supply your own **extracted, plaintext** CUSA06810 game folder. Neither this repository nor the launcher includes the game, PS4 firmware, package decryption tools, or downloads.
 
-## Download and run v1.1 (no compiling)
+## Download and run v1.2 (no compiling)
 
-**Playing the game? Download the Linux runtime archive from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest).** Choose `valkyria-revolution-linux-x86_64-35f35f5.tar.gz`, not the source archive.
+**Playing the game? Download the Linux runtime archive from the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2).** Choose `valkyria-revolution-linux-x86_64-d29d542.tar.gz`, not the source archive.
 
 1. Have your own extracted, plaintext `CUSA06810` directory. It must contain `sce_sys/param.sfo`, `eboot.bin`, `sce_module/`, and the game's data. Do not point to a `.pkg`, `eboot.bin` alone, or the parent of `CUSA06810`.
 2. Extract the downloaded `.tar.gz` with your file manager, or run the extraction commands below.
-3. Open a terminal **inside the extracted Linux release folder**, then run `bash Play-Valkyria.sh --game "/path/to/CUSA06810"`. Replace the example path with your real one and keep quotes if it contains spaces.
+3. Open a terminal **inside the extracted Linux release folder**, then run `bash Play-Game.sh --game "/path/to/CUSA06810"`. Replace the example path with your real one and keep quotes if it contains spaces.
 
 ```bash
-tar -xzf valkyria-revolution-linux-x86_64-35f35f5.tar.gz
-cd valkyria-revolution-linux-x86_64-35f35f5
-bash Play-Valkyria.sh --game "/path/to/CUSA06810"
+tar -xzf valkyria-revolution-linux-x86_64-d29d542.tar.gz
+cd valkyria-revolution-linux-x86_64-d29d542
+bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
+
+After the first successful launch, run `bash Play-Game.sh` without `--game` to reuse the remembered game folder. Supplying `--game` again overrides it. If no valid location is configured, the launcher gives an example command and directs you to `PLAYER_README.txt`. No Tkinter picker is provided.
 
 **No library installation step is necessary for FFmpeg, SDL3, fmt, Zydis, or the other bundled application libraries.** No `LD_LIBRARY_PATH` setting or source compilation is required. You still need x86-64 Linux, glibc 2.35+, Python 3, and a working host Vulkan graphics/display stack.
 
@@ -58,7 +60,7 @@ python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810"
 
 The game folder must include `sce_sys/param.sfo` with the appropriate title ID, `eboot.bin`, the required modules and game data. The input must already be extracted and usable; the launcher does not decrypt encrypted game packages.
 
-The source launcher can also open a game-folder chooser when Python Tkinter is available. It remembers the chosen directory. You can prepare files without launching the game:
+The source launcher also remembers the chosen directory. Subsequent runs may omit `--game`. A Tkinter folder picker is not available. You can prepare files without launching the game:
 
 ~~~bash
 python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810" --prepare-only
@@ -128,7 +130,7 @@ Press **Insert**, or hold **L2** and click **R3**, to open the custom Valkyria P
 
 Resolution, display mode, upscaler selection and sharpening apply live; **IMPORTANT: changing anisotropic filtering (AF) requires restarting the game**. The overlay saves changed settings when you close it. The game renders its original 1080p scene before display reconstruction, so a 4K output is not native 4K game rendering. There is no bundled 60 FPS patch or frame-generation mode. The portrait-backed wine-red menu includes recorded navigation, confirm and cancel sounds.
 
-To quit, choose **Exit Game**, then confirm **Exit to desktop**. Cancel or Circle/Escape returns to the game. **Save progress inside Valkyria before exiting**; saving PS4RT graphics settings is not a game save.
+To restart, choose **Restart Game** and confirm. To quit, choose **Exit Game**, then confirm **Exit to desktop**. Cancel or Circle/Escape returns to the game. **Save progress inside Valkyria before exiting**; saving PS4RT graphics settings is not a game save.
 
 FSR 3.1 is part of the runtime. The FSR 4 v07 shader/model files and license notice are in `fsr4_shaders/`; they are required renderer dependencies, **not** game shader cache files. FSR 4 needs compatible Vulkan GPU features. If it is unavailable, use FSR 3.1. See the [Linux distribution guide](DISTRIBUTING_LINUX.md).
 

@@ -20,7 +20,7 @@ not affiliated with Sega, Sony, or AMD.
 
 **Want to play? Download the prebuilt Linux release. No compilation, Podman, or separate FFmpeg/SDL3 installation required.**
 
-1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest) and download the updated v1.1 **`linux-x86_64`** player archive. The separately named `source` archive is for developers. **v1.0 is superseded by v1.1.**
+1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2) and download **`valkyria-revolution-linux-x86_64-d29d542.tar.gz`**. The separately named **`valkyria-revolution-source-d29d542.tar.gz`** archive is for developers. v1.2 supersedes v1.1; earlier versions remain available for rollback.
 2. **Prepare your own game:** Supply an extracted, plaintext `CUSA06810` folder with `sce_sys/param.sfo`, `eboot.bin`, required modules and game data. Point to the `CUSA06810` folder itself, **not** a PKG, the parent directory or the executable.
 3. **Extract the player archive** with your file manager, then open a terminal inside its extracted folder. On the first launch, supply your extracted game path:
 
@@ -81,6 +81,7 @@ Other Linux distributions remain unverified.
   after restarting the game. Sharpening is a separate image adjustment.
 - In-game PS4RT graphics menu: press **Insert**, or hold **L2 + R3 click**.
   Navigate with the D-pad, confirm with Cross, and go back with Circle.
+- **Restart Game** in the graphics menu asks for confirmation before restarting. Save progress first; restarting does not create a game save.
 - **Exit Game** in the graphics menu asks for confirmation, then exits to the
   Linux desktop using the normal window-close path. Save in-game progress first;
   this does not trigger a game save.
