@@ -31,7 +31,7 @@ PUBLIC_DOC_LICENSES = {'docs/licenses/GPL-3.0.txt'}
 SOURCE_FILES = {'LICENSE', 'README.md', 'build.sh',
                 'build-headless.sh', 'run-valkyria.sh', 'run.py', 'run.sh',
                 'shell.nix', 'flake.nix', 'flake.lock', '.gitignore', '.gitmodules',
-                '.gitattributes', 'README.es.md', 'README.pt-BR.md', 'msys2-env.sh'}
+                '.gitattributes', 'README.es.md', 'README.pt-BR.md'}
 # Inherited launcher artwork/font are unused by the Valkyria runtime; do not ship
 # material with unreviewed game-art provenance in a new community package.
 EXCLUDED = {'launcher/ps4rt.png', 'launcher/ps4rt.ico', 'launcher/ps4rt-font.ttf'}
