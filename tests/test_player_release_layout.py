@@ -42,10 +42,10 @@ class PlayerReleaseLayoutTests(unittest.TestCase):
     def test_player_quick_start_uses_repo_url_not_release_revision(self):
         s = (TOOLS / 'package_valkyria.py').read_text()
         self.assertIn("add('PLAYER_README.txt'", s)
-        self.assertIn('github.com/HekamiAeon/valkyria-revolution-ps4rt', s)
         self.assertIn('if not args.runtime:', s)
         self.assertIn("ROOT / 'packaging/linux/PLAYER_README.txt'", s)
         readme = (Path(__file__).resolve().parents[1] / 'packaging/linux/PLAYER_README.txt').read_text()
+        self.assertIn('github.com/HekamiAeon/valkyria-revolution-ps4rt', readme)
         self.assertIn('bash Play-Game.sh --game', readme)
         self.assertIn('bash Play-Game.sh', readme)
         build = (Path(__file__).resolve().parents[1] / 'packaging/linux/build-runtime.sh').read_text()

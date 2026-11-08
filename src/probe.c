@@ -425,13 +425,12 @@ void runtime_restart(void) {
     const char *command = getenv("PS4RT_RESTART_COMMAND");
     /* Mark descriptors close-on-exec; do not close live GPU fds under threads. */
     syscall(SYS_close_range, 3u, ~0u, 4u); /* CLOSE_RANGE_CLOEXEC */
-    if (command && *command) {
-        puts("Runtime: restarting through PS4RT_RESTART_COMMAND");
-        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-    } else {
-        puts("Runtime: restarting through run.sh");
-        execlp("bash", "bash", "run.sh", (char *)NULL);
+    if (!command || !*command) {
+        fputs("runtime_restart: PS4RT_RESTART_COMMAND is not set\\n", stderr);
+        _exit(1);
     }
+    puts("Runtime: restarting through PS4RT_RESTART_COMMAND");
+    execl("/bin/sh", "sh", "-c", command, (char *)NULL);
     perror("runtime_restart: exec");
     _exit(1);
 #endif

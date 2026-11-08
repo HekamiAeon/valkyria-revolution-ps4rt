@@ -28,6 +28,14 @@ class PlayerRestartTests(unittest.TestCase):
         self.assertIn("env['PS4RT_RESTART_COMMAND'] = shlex.join(restart)", launcher)
         self.assertIn("'--data-dir', str(data)", launcher)
 
+    def test_no_retired_shell_launcher_fallback(self):
+        source = (ROOT / "src/probe.c").read_text()
+        restart = source.split("void runtime_restart(void) {", 1)[1]
+        restart = restart.split("/* The guest code needs", 1)[0]
+        self.assertIn("PS4RT_RESTART_COMMAND is not set", restart)
+        self.assertNotIn('execlp("bash"', restart)
+        self.assertIn('execl("/bin/sh", "sh", "-c", command', restart)
+
     def test_gpu_descriptors_are_closed_at_exec(self):
         source = (ROOT / "src/probe.c").read_text()
         self.assertIn("SYS_close_range, 3u, ~0u, 4u", source)

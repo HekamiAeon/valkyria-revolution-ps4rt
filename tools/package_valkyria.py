@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FSR4_LOCK = load_lock(ROOT)
 FSR4_FILES = FSR4_LOCK['files']
 SOURCE_DIRS = {'src', 'gpu', 'third_party', 'scripts', 'tools', 'tests', 'docs',
-               'packaging', 'patches', 'launcher', '.github'}
+               'packaging', 'patches', '.github'}
 PUBLIC_DOCS = {
     'docs/RUNNING_LINUX.md', 'docs/DISTRIBUTING_LINUX.md',
     'docs/UPSTREAM_CREDITS.md', 'docs/LINUX_BINARY_RELEASE.md',
@@ -29,7 +29,7 @@ PUBLIC_DOCS = {
 PUBLIC_MEDIA = {'docs/images/readme/gameplay.png'}
 PUBLIC_DOC_LICENSES = {'docs/licenses/GPL-3.0.txt'}
 SOURCE_FILES = {'LICENSE', 'README.md', 'build.sh',
-                'build-headless.sh', 'run-valkyria.sh', 'run.py', 'run.sh',
+                'build-headless.sh',
                 'shell.nix', 'flake.nix', 'flake.lock', '.gitignore', '.gitmodules',
                 '.gitattributes', 'README.es.md', 'README.pt-BR.md'}
 # Inherited launcher artwork/font are unused by the Valkyria runtime; do not ship
@@ -204,6 +204,16 @@ def main():
     bundle = args.bundle_from.expanduser().resolve() if args.bundle_from else None
     revision = git('rev-parse', 'HEAD').decode().strip()
     files = git('ls-tree', '-r', '--name-only', 'HEAD').decode().splitlines()
+    unexpected = {
+        name for name in files
+        if name.startswith('fsr4_shaders/')
+        and name not in FSR4_FILES
+    }
+    if unexpected:
+        raise SystemExit(
+            'Unreviewed committed FSR4 assets: '
+            + ', '.join(sorted(unexpected)[:5])
+        )
     source_files = [f for f in files if source_allowed(f)]
     runtime_files = dict(RUNTIME)
     runtime_files.update({name: name for name in PLAYER_LICENSE_FILES})

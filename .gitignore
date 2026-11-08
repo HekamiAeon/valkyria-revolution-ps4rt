@@ -66,3 +66,6 @@ CLAUDE.md
 !/gpu/assets/sounds/confirm.wav
 !/gpu/assets/sounds/cancel.wav
 !/gpu/assets/sounds/open.wav
+
+# Reviewed FSR4 v07 4320-tier shaders.
+!/fsr4_shaders/fsr4_model_v07_i8_*_4320_*.spv

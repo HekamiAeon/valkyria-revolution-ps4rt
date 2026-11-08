@@ -8,8 +8,8 @@ import sys
 import tempfile
 import unittest
 
-EXE = Path(os.environ.get('VALKYRIA_PROBE', ROOT / 'out/ps4rt-probe'))
-HOST_EXE = Path(os.environ.get('VALKYRIA_PROBE', ROOT / ('out/ps4rt-probe' + ('.exe' if sys.platform == 'win32' else ''))))
+EXE = Path(os.environ.get('VALKYRIA_PROBE', ROOT / 'out/ps4rt'))
+HOST_EXE = Path(os.environ.get('VALKYRIA_PROBE', ROOT / ('out/ps4rt' + ('.exe' if sys.platform == 'win32' else ''))))
 
 
 def package(code, relocs=(), names=(), capabilities=None):

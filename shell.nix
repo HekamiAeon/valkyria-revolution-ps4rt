@@ -1,4 +1,4 @@
-# Build environment: `nix-shell --run 'bash run.sh'`
+# Build environment: `nix-shell --run 'bash build.sh'`
 { pkgs ? import <nixpkgs> {} }:
 pkgs.mkShell {
   packages = with pkgs; [

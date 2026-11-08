@@ -63,7 +63,7 @@ def main():
                 public_name = 'docs/source-metadata/github/' + name[len('.github/'):]
             payload[public_name] = (data, member.mode)
     if not set(fsr4['files']).issubset(payload):
-        raise ValueError('Source export does not contain all 189 verified FSR4 v07 assets')
+        raise ValueError('Source export is missing verified FSR4 v07 assets')
     for name, source in {
         'README.md': ROOT / 'packaging/github/README.md',
         'packaging/github/README.md': ROOT / 'packaging/github/README.md',
