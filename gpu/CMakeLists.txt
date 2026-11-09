@@ -259,6 +259,10 @@ add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
 
+add_executable(valkyria-movie-test EXCLUDE_FROM_ALL ../tests/test_valkyria_movie.cpp)
+target_compile_options(valkyria-movie-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(valkyria-movie-test PRIVATE ..)
+
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions

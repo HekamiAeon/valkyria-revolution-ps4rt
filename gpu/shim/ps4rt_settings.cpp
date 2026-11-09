@@ -164,6 +164,12 @@ void Load(bool valkyria) {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
+    // Valkyria can expose the previous scene when a pending async pipeline skips
+    // a movie-transition/fade draw. Older settings saved async=1 automatically;
+    // use the serial compatibility path, retaining an explicit environment opt-in.
+    if (valkyria) {
+        v.async_shaders = false;
+    }
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("PS4RT_UPSCALER")) {
         v.upscaler = UpscalerOff;
@@ -193,6 +199,10 @@ void Load(bool valkyria) {
         if (const char* value = std::getenv(env); value && value[0]) {
             Set(v, key, value);
         }
+    }
+    if (valkyria) {
+        std::printf("Valkyria: %s graphics compilation\n",
+                    v.async_shaders ? "asynchronous" : "synchronous");
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;

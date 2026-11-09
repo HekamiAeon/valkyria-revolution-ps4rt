@@ -103,7 +103,27 @@ int main() {
     const std::string rewritten = Read(path);
     assert(rewritten.find("legacy_unused_option") == std::string::npos);
     { std::ofstream empty(path); }
+    Env("PS4RT_ASYNC_SHADERS", "");
     Ps4RtSettings::Load(true);
+    assert(!v.async_shaders);
+    {
+        std::ofstream out(path);
+        out << "async_shaders=1\n"; // Earlier Valkyria versions saved the old default.
+    }
+    Ps4RtSettings::Load(true);
+    assert(!v.async_shaders);
+    Ps4RtSettings::Load(false);
+    assert(v.async_shaders); // Other profiles retain their saved preference.
+    Env("PS4RT_ASYNC_SHADERS", "1");
+    Ps4RtSettings::Load(true);
+    assert(v.async_shaders); // Explicit opt-in remains available for diagnostics.
+    Env("PS4RT_ASYNC_SHADERS", "0");
+    Ps4RtSettings::Load(true);
+    assert(!v.async_shaders);
+    Env("PS4RT_ASYNC_SHADERS", "");
+    { std::ofstream empty(path); }
+    Ps4RtSettings::Load(true);
+    assert(!v.async_shaders);
     assert(v.valkyria && !v.spatial_aa && !v.fsr1 && v.upscaler==Ps4RtSettings::UpscalerFsr3 && v.output_res==3);
     v.spatial_aa=false; v.fsr1=false; v.output_res=2;
     Ps4RtSettings::Save();

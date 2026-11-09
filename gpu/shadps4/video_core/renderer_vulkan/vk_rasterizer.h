@@ -199,8 +199,9 @@ private:
     void DepthStencilCopy(bool is_depth, bool is_stencil);
     void EliminateFastClear();
 
-    void UpdateDynamicState(const GraphicsPipeline* pipeline, bool is_indexed) const;
-    void UpdateViewportScissorState() const;
+    void UpdateDynamicState(const GraphicsPipeline* pipeline, bool is_indexed,
+                            float movie_x_offset = 0.f) const;
+    void UpdateViewportScissorState(float movie_x_offset = 0.f) const;
     void UpdateDepthStencilState() const;
     /// ps4rt: the squaring pipeline of a scaled MIN/MAX blend when this draw can use it.
     vk::Pipeline SquarePass(const GraphicsPipeline& pipeline) const;
