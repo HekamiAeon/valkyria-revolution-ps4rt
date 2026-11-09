@@ -3500,6 +3500,20 @@ void Rasterizer::UpdateViewportScissorState() const {
     }
 
     auto& dynamic_state = scheduler.GetDynamicState();
+    if (FrameCapture::Active()) {
+        for (size_t i = 0; i < viewports.size(); ++i) {
+            const auto& viewport = viewports[i];
+            const auto& scissor = scissors[i];
+            char note[224];
+            std::snprintf(note, sizeof(note),
+                          "\n  viewport %zu: xy %.3f,%.3f size %.3fx%.3f; "
+                          "scissor xy %d,%d size %ux%u; target scale %.3f,%.3f",
+                          i, viewport.x, viewport.y, viewport.width, viewport.height,
+                          scissor.offset.x, scissor.offset.y, scissor.extent.width,
+                          scissor.extent.height, target_scale[0], target_scale[1]);
+            FrameCapture::Note(note);
+        }
+    }
     dynamic_state.SetViewports(viewports);
     dynamic_state.SetScissors(scissors);
 }
