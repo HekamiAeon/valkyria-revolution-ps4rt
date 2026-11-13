@@ -505,6 +505,14 @@ static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *
     if (platinum) *platinum=-1;
     return 0;
 }
+/* Crowbar's trophy test profile (crowbar-sdk 1.3): the same unlock as the game's call. */
+int runtime_crowbar_unlock(int id) {
+    if (id<0 || id>127) return -1;
+    int32_t platinum=-1;
+    trophy_unlock(0,0,id,&platinum);
+    printf("Crowbar: trophy %d unlocked on request\n",id);
+    return 0;
+}
 static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,void *data) {
     (void)ctx; (void)handle;
     if (details) { uint64_t size; memcpy(&size,details,8); memset((char *)details+8,0,size>8 && size<4096 ? size-8 : 0); }
