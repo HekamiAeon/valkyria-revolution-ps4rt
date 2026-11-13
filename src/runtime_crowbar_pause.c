@@ -11,6 +11,10 @@
  * so the game does not see the pause as a long frame. Without PS4RT_CONTROL_DIR nothing runs. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <unistd.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +84,17 @@ static void set_paused(int on) {
     pthread_mutex_unlock(&pause_lock);
 }
 
+int runtime_crowbar_unlock(int id); /* runtime_services.c */
+
+/* Exit code 0 without running the libraries' exit code (it can wait on threads the game holds). */
+static void runtime_crowbar_quit(void) {
+    fflush(NULL);
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 0);
+#endif
+    _exit(0);
+}
+
 static void *watch(void *unused) {
     (void)unused;
     long last = 0;
@@ -92,9 +107,10 @@ static void *watch(void *unused) {
         if (!in) continue;
         long seq = 0;
         char word[16] = {0};
-        int got = fscanf(in, "%ld %15s", &seq, word);
+        int arg = -1;
+        int got = fscanf(in, "%ld %15s %d", &seq, word, &arg);
         fclose(in);
-        if (got != 2 || seq <= last) continue;
+        if (got < 2 || seq <= last) continue;
         last = seq;
         if (!strcmp(word, "pause")) {
             uint64_t movie = __atomic_load_n(&last_movie_frame_ns, __ATOMIC_ACQUIRE);
@@ -104,6 +120,13 @@ static void *watch(void *unused) {
         } else if (!strcmp(word, "resume")) {
             set_paused(0);
             write_state(seq, "running");
+        } else if (!strcmp(word, "unlock")) {
+            /* Crowbar's test profile: a trophy unlocked as if the game had (crowbar-sdk 1.3). */
+            write_state(seq, runtime_crowbar_unlock(arg) == 0 ? "unlocked" : "refused");
+        } else if (!strcmp(word, "quit")) {
+            /* The player quit from Crowbar (crowbar-sdk 1.4): trophies are already on disk. */
+            write_state(seq, "quitting");
+            runtime_crowbar_quit();
         }
     }
     return NULL;
