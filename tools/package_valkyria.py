@@ -52,6 +52,8 @@ RUNTIME = {
     'scripts/link_modules.py': 'scripts/link_modules.py',
     'scripts/link_libc.py': 'scripts/link_libc.py',
     'scripts/content_profile.py': 'scripts/content_profile.py',
+    'scripts/trophy_catalog.py': 'scripts/trophy_catalog.py',
+    'scripts/trophy_crypto.py': 'scripts/trophy_crypto.py',
     'tools/fetch_fsr4_assets.sh': 'tools/fetch_fsr4_assets.sh',
     'tools/fsr4_optimize.sh': 'tools/fsr4_optimize.sh',
     'tools/fsr4_post_lds.pl': 'tools/fsr4_post_lds.pl',
@@ -170,10 +172,12 @@ def source_allowed(name):
     if path.parts[0] == 'fsr4_shaders':
         return name in FSR4_FILES
     if any(p in {'out', 'original', 'references', 'savedata', 'captures',
-                 'frame-dump', 'fsr4_shaders', 'fsr4_411', '__pycache__', '.git'} for p in path.parts):
+                 'frame-dump', 'achievements', 'fsr4_shaders', 'fsr4_411', '__pycache__', '.git'} for p in path.parts):
         return False
     if path.suffix.lower() in {'.pkg', '.prx', '.self', '.elf', '.sfo', '.cpk', '.usm',
-                              '.g1t', '.g1m', '.at9'}:
+                              '.g1t', '.g1m', '.at9', '.trp', '.esfm', '.sfm'}:
+        return False
+    if path.name == 'npbind.dat':
         return False
     if path.suffix.lower() == '.bin' and name != 'tests/data/isa_fixture.bin':
         return False

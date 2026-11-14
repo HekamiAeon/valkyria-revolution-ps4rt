@@ -40,6 +40,14 @@ patches.json
 *.g1t
 *.g1m
 *.at9
+*.trp
+*.esfm
+*.sfm
+*.TRP
+*.ESFM
+*.SFM
+npbind.dat
+achievements/
 
 # Local development notes, agent instructions, and test media
 AGENTS.md

@@ -13,14 +13,15 @@ class PlayerRestartTests(unittest.TestCase):
         self.assertIn('ImGui::Button("Restart Game")', compact)
         self.assertIn('ImGui::BeginPopupModal("Restart game?"', compact)
         self.assertIn('Unsaved game progress will be lost.', compact)
-        self.assertIn("Ps4RtSettings::Save();\n                dirty = false;\n                runtime_restart();", compact)
+        self.assertRegex(compact, r"Ps4RtSettings::Save\(\);\s+dirty = false;\s+runtime_restart\(\);")
         self.assertNotIn('Button("Install DLC', compact)
         self.assertIn('!ImGui::IsPopupOpen("Restart game?")', compact)
 
     def test_escape_cancels_confirmation(self):
         overlay = (ROOT / "gpu/shim/ps4rt_overlay.cpp").read_text()
         events = overlay.split("bool HandleEvent(", 1)[1]
-        self.assertIn('ImGui::IsPopupOpen("Restart game?")', events)
+        self.assertIn('ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)', events)
+        self.assertIn('Ps4RtMenuNavigation::ChildPanelFocused()', events)
 
     def test_launcher_restarts_selected_game(self):
         launcher = (ROOT / "scripts/valkyria_launch.py").read_text()

@@ -52,6 +52,16 @@ class PackageBoundary(unittest.TestCase):
         self.assertFalse(any(dest.startswith('docs/') for dest in package.PLAYER_LICENSE_FILES))
         self.assertFalse(any(dest.startswith('docs/') for dest in package.OVERLAY_ASSET_NAMES))
 
+    def test_trophy_helpers_ship_without_player_state(self):
+        for name in ('scripts/trophy_catalog.py', 'scripts/trophy_crypto.py'):
+            self.assertEqual(package.RUNTIME[name], name)
+            self.assertTrue(package.source_allowed(name))
+        for name in ('out/valkyria/user/achievements/1/NPWR11697_00.dat',
+                     'scripts/achievements/catalog.tsv', 'src/trophy00.trp',
+                     'scripts/npbind.dat', 'gpu/TROP.ESFM', 'gpu/TROP.SFM',
+                     'references/Code-Fairy-PS4RT/scripts/trophy_catalog.py'):
+            self.assertFalse(package.source_allowed(name))
+
     def test_binary_container_boundary(self):
         fixture_name = 'tests/data/isa_fixture.bin'
         fixture = (Path(__file__).resolve().parents[1] / fixture_name).read_bytes()

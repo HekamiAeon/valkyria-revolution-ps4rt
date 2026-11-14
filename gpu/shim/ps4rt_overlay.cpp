@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ps4rt_overlay.h"
+#include "ps4rt_achievements_ui.h"
+#include "ps4rt_menu_navigation.h"
 
 #include <algorithm>
 #include <atomic>
@@ -76,6 +78,7 @@ Ps4RtMenuInput::Controllers menu_controllers;
 Ps4RtMenuSounds::Player menu_sounds;
 std::unordered_map<SDL_JoystickID, std::array<int, 2>> menu_stick_directions;
 bool cancel_was_editing = false;
+bool cancel_was_in_child_panel = false;
 int requested_tab = -1; // switch on the next frame (L1/R1, Q/E, menu opened)
 // The game's text dialog (SetTextEntry), guarded by imgui_mutex.
 bool text_entry_active = false;
@@ -597,77 +600,103 @@ void Menu() {
     DrawMenuArtInWindow();
     footer_help = nullptr;
     if (s.valkyria) {
-        ValkyriaGraphics();
+        const bool switch_tab = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ||
+                                ImGui::IsKeyPressed(ImGuiKey_E, false) ||
+                                ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ||
+                                ImGui::IsKeyPressed(ImGuiKey_Q, false);
+        if (!ImGui::GetIO().WantTextInput && switch_tab)
+            requested_tab = s.menu_tab == 4 ? 0 : 4;
+        if (requested_tab != 4 && requested_tab >= 0) requested_tab = 0;
+        if (ImGui::BeginTabBar("##compact_tabs")) {
+            for (int tab : {0, 4}) {
+                const auto flags = requested_tab == tab ? ImGuiTabItemFlags_SetSelected : 0;
+                if (!ImGui::BeginTabItem(tab == 4 ? "Achievements" : "Graphics", nullptr, flags)) continue;
+                if (s.menu_tab != tab) { s.menu_tab = tab; dirty = true; }
+                // Reserve the existing footer and confirmation buttons on both pages.
+                const float footer = tab == 4 ? ImGui::GetTextLineHeightWithSpacing() * 2.0f :
+                    ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+                if (ImGui::BeginChild("##compact_body", ImVec2(0, -footer))) {
+                    if (tab == 4) Ps4RtAchievementsUi::List(base_scale);
+                    else ValkyriaGraphics();
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            requested_tab = -1;
+            ImGui::EndTabBar();
+        }
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("%s", footer_help ? footer_help :
-            PadText("D-pad: navigate. Cross: select. Circle: back.",
-                    "D-pad: navigate. A: select. B: back.",
-                    "D-pad: navigate. B: select. A: back."));
+            PadText("L1/R1 or Q/E: tabs. D-pad: navigate. Cross: select. Circle: back.",
+                    "LB/RB or Q/E: tabs. D-pad: navigate. A: select. B: back.",
+                    "L/R or Q/E: tabs. D-pad: navigate. B: select. A: back."));
         ImGui::PopTextWrapPos();
-        if (ImGui::Button("Close")) keep_open = false;
-        ImGui::SameLine();
-        if (ImGui::Button("Exit Game"))
-            ImGui::OpenPopup("Exit Valkyria Revolution?");
-        ImGui::SameLine();
-        if (ImGui::Button("Restart Game"))
-            ImGui::OpenPopup("Restart game?");
-        // Restart from boot; game progress is saved only inside the game itself.
-        if (ImGui::BeginPopupModal("Restart game?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("Restart the game from the start? Unsaved game progress will be lost.");
-            ImGui::Spacing();
-            if (ImGui::Button("Cancel") ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SetItemDefaultFocus();
+        if (s.menu_tab != 4) {
+            if (ImGui::Button("Close")) keep_open = false;
             ImGui::SameLine();
-            if (ImGui::Button("Restart")) {
-                Ps4RtSettings::Save();
-                dirty = false;
-                runtime_restart();
-            }
-            ImGui::EndPopup();
-        }
-        // Confirm explicitly: closing the host process does not save in-game progress.
-        if (ImGui::BeginPopupModal("Exit Valkyria Revolution?", nullptr,
-                                  ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("Exit to desktop? Unsaved game progress will be lost.");
-            ImGui::Spacing();
-            if (ImGui::Button("Cancel") ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SetItemDefaultFocus();
+            if (ImGui::Button("Exit Game"))
+                ImGui::OpenPopup("Exit Valkyria Revolution?");
             ImGui::SameLine();
-            if (ImGui::Button("Exit to desktop")) {
-                // Use the existing window-close path, not an abrupt renderer-thread exit.
-                // Save runtime graphics settings first; this is not an in-game save.
-                Ps4RtSettings::Save();
-                dirty = false;
-                SDL_Event quit{};
-                quit.type = SDL_EVENT_QUIT;
-                if (SDL_PushEvent(&quit)) {
+            if (ImGui::Button("Restart Game"))
+                ImGui::OpenPopup("Restart game?");
+            // Restart from boot; game progress is saved only inside the game itself.
+            if (ImGui::BeginPopupModal("Restart game?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("Restart the game from the start? Unsaved game progress will be lost.");
+                ImGui::Spacing();
+                if (ImGui::Button("Cancel") ||
+                    ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                    ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
                     ImGui::CloseCurrentPopup();
-                } else {
-                    std::fprintf(stderr, "PS4RT: could not queue exit event: %s\n", SDL_GetError());
                 }
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button("Restart")) {
+                    Ps4RtSettings::Save();
+                    dirty = false;
+                    runtime_restart();
+                }
+                ImGui::EndPopup();
             }
-            ImGui::EndPopup();
-        }
+            // Confirm explicitly: closing the host process does not save in-game progress.
+            if (ImGui::BeginPopupModal("Exit Valkyria Revolution?", nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("Exit to desktop? Unsaved game progress will be lost.");
+                ImGui::Spacing();
+                if (ImGui::Button("Cancel") ||
+                    ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                    ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button("Exit to desktop")) {
+                    // Use the existing window-close path, not an abrupt renderer-thread exit.
+                    // Save runtime graphics settings first; this is not an in-game save.
+                    Ps4RtSettings::Save();
+                    dirty = false;
+                    SDL_Event quit{};
+                    quit.type = SDL_EVENT_QUIT;
+                    if (SDL_PushEvent(&quit)) {
+                        ImGui::CloseCurrentPopup();
+                    } else {
+                        std::fprintf(stderr, "PS4RT: could not queue exit event: %s\n", SDL_GetError());
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        } // Footer actions belong to Graphics.
         // Circle first cancels a popup or slider; another press closes the panel.
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) &&
-            !cancel_was_editing && !ImGui::IsPopupOpen("Exit Valkyria Revolution?") &&
+            !cancel_was_editing && !cancel_was_in_child_panel && !ImGui::IsPopupOpen("Exit Valkyria Revolution?") &&
             !ImGui::IsPopupOpen("Restart game?"))
             keep_open = false;
         ImGui::End();
         if (!keep_open) SetOpen(false);
         return;
     }
-    constexpr int TabCount = 4;
+    constexpr int TabCount = 5;
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantTextInput) {
         const int step = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
@@ -678,9 +707,10 @@ void Menu() {
             requested_tab = (s.menu_tab + step + TabCount) % TabCount;
         }
     }
-    const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    const float footer = s.menu_tab == 4 ? ImGui::GetTextLineHeightWithSpacing() * 2.0f :
+        ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("##tabs")) {
-        static const char* const tabs[TabCount] = {"Game", "Image", "Performance", "Overlay"};
+        static const char* const tabs[TabCount] = {"Game", "Image", "Performance", "Overlay", "Achievements"};
         for (int tab = 0; tab < TabCount; ++tab) {
             const ImGuiTabItemFlags flags = requested_tab == tab ? ImGuiTabItemFlags_SetSelected : 0;
             if (!ImGui::BeginTabItem(tabs[tab], nullptr, flags)) {
@@ -695,7 +725,8 @@ void Menu() {
                 case 0: GameTab(); break;
                 case 1: ImageTab(); break;
                 case 2: PerformanceTab(); break;
-                default: OverlayTab(); break;
+                case 3: OverlayTab(); break;
+                default: Ps4RtAchievementsUi::List(base_scale); break;
                 }
             }
             ImGui::EndChild();
@@ -713,26 +744,28 @@ void Menu() {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", footer_help ? footer_help : PadText("L1 / R1 or Q / E: switch tabs. Settings are saved in ps4rt.ini.", "LB / RB or Q / E: switch tabs. Settings are saved in ps4rt.ini.", "L / R or Q / E: switch tabs. Settings are saved in ps4rt.ini."));
     ImGui::PopTextWrapPos();
-    if (const int changes = RestartChanges()) {
-        ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "%d change%s need%s a restart (unsaved progress is lost).",
-                           changes, changes == 1 ? "" : "s", changes == 1 ? "s" : "");
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!std::getenv("PS4RT_RESTART_COMMAND"));
-        if (ImGui::Button("Apply and restart")) {
-            // The new launch confirms the options once the game shows; run.py restores the
-            // previous ones if it never does (restart_unconfirmed).
-            s.restart_unconfirmed = true;
-            Ps4RtSettings::Save();
-            runtime_restart();
+    if (s.menu_tab != 4) {
+        if (const int changes = RestartChanges()) {
+            ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "%d change%s need%s a restart (unsaved progress is lost).",
+                               changes, changes == 1 ? "" : "s", changes == 1 ? "s" : "");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!std::getenv("PS4RT_RESTART_COMMAND"));
+            if (ImGui::Button("Apply and restart")) {
+                // The new launch confirms the options once the game shows; run.py restores the
+                // previous ones if it never does (restart_unconfirmed).
+                s.restart_unconfirmed = true;
+                Ps4RtSettings::Save();
+                runtime_restart();
+            }
+            ImGui::EndDisabled();
+        } else {
+            ImGui::NewLine();
         }
-        ImGui::EndDisabled();
-    } else {
-        ImGui::NewLine();
-    }
-    const float close_width = ImGui::CalcTextSize("Close").x + ImGui::GetStyle().FramePadding.x * 2;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - close_width);
-    if (ImGui::Button("Close")) {
-        keep_open = false;
+        const float close_width = ImGui::CalcTextSize("Close").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - close_width);
+        if (ImGui::Button("Close")) {
+            keep_open = false;
+        }
     }
     ImGui::End();
     if (!keep_open) {
@@ -977,6 +1010,27 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(ps4rt_font_ttf),
                                    int(ps4rt_font_ttf_end - ps4rt_font_ttf), 18.0f, &font_config);
 
+    // Original trophy strings can use Japanese, Korean or Chinese. Reuse a
+    // locally installed open CJK font when available; no game font is bundled.
+    if (const char* language = std::getenv("PS4RT_TROPHY_LANGUAGE"); language &&
+        (std::atoi(language) == 0 || (std::atoi(language) >= 9 && std::atoi(language) <= 11))) {
+        const char* fonts[] = {
+            std::getenv("PS4RT_CJK_FONT"),
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
+        };
+        for (const char* path : fonts) {
+            if (!path || !*path) continue;
+            std::FILE* file = std::fopen(path, "rb");
+            if (!file) continue;
+            std::fclose(file);
+            ImFontConfig merge;
+            merge.MergeMode = true;
+            if (io.Fonts->AddFontFromFileTTF(path, 18.0f, &merge)) break;
+        }
+    }
+
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(
         instance.ApiVersion(),
@@ -1145,8 +1199,9 @@ bool HandleEvent(const SDL_Event& event) {
             return true;
         }
         if (is_open && event.key.key == SDLK_ESCAPE &&
-            (ImGui::IsPopupOpen("Exit Valkyria Revolution?") || ImGui::IsPopupOpen("Restart game?"))) {
-            // Let Escape cancel the exit or restart confirmation, not close the panel.
+            (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
+             Ps4RtMenuNavigation::ChildPanelFocused())) {
+            // Escape first leaves a child or cancels an edit/confirmation.
             if (down && !event.key.repeat) menu_sounds.Play(Ps4RtMenuSounds::Cue::Cancel);
             io.AddKeyEvent(ImGuiKey_Escape, down);
             return true;
@@ -1321,7 +1376,7 @@ void SetLoading(bool active, u32 done, u32 total) {
 bool Visible() {
     const auto& s = Ps4RtSettings::Get();
     return initialized && (loading || background_total || menu_open || text_entry_active || choice_active ||
-                           choice_retiring || s.show_fps || NoticeActive());
+                           choice_retiring || s.show_fps || NoticeActive() || Ps4RtAchievementsUi::Pending());
 }
 
 bool CapturesInput() {
@@ -1378,8 +1433,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
 
     UpdateChoiceTextures();
+    Ps4RtAchievementsUi::Prepare(menu_open && Ps4RtSettings::Get().menu_tab == 4);
     ImGui_ImplVulkan_NewFrame();
     cancel_was_editing = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || ImGui::GetActiveID();
+    cancel_was_in_child_panel = Ps4RtMenuNavigation::ChildPanelFocused();
     ImGui::NewFrame();
     if (loading) {
         LoadingScreen();
@@ -1417,6 +1474,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (choice_active && !menu_open) {
         ChoiceBox();
     }
+    Ps4RtAchievementsUi::Notification(base_scale);
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{

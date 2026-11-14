@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
 spec = importlib.util.spec_from_file_location(
     'valkyria_player_launcher', ROOT / 'scripts/valkyria_launch.py')
 launcher = importlib.util.module_from_spec(spec)

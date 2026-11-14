@@ -4,6 +4,7 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out/headless
 cc=${CC:-cc}
+"${CXX:-c++}" -std=c++23 -O2 -g -pthread -Igpu/shim -c gpu/shim/ps4rt_achievements.cpp -o out/headless/achievements.o
 flags=(-std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DVALKYRIA_HEADLESS -I. -Isrc)
 runtime=()
 for source in src/runtime*.c; do
@@ -14,10 +15,10 @@ for source in src/runtime*.c; do
 done
 "$cc" "${flags[@]}" -mgeneral-regs-only -c src/isa_emulate.c -o out/headless/isa_emulate.o
 "$cc" "${flags[@]}" -no-pie -rdynamic src/probe.c "${runtime[@]}" src/headless.c \
-    src/cpu_check.c src/isa_rewrite.c out/headless/isa_emulate.o -lm -ldl -o out/valkyria-probe
+    src/cpu_check.c src/isa_rewrite.c out/headless/isa_emulate.o out/headless/achievements.o -lstdc++ -lm -ldl -o out/valkyria-probe
 echo "Built $PWD/out/valkyria-probe (headless; use --cpu-only)"
 if [[ ${1:-} == --test ]]; then
-    "$cc" "${flags[@]}" tests/test_runtime.c "${runtime[@]}" src/headless.c -lm -ldl -o out/headless/runtime-test
+    "$cc" "${flags[@]}" tests/test_runtime.c "${runtime[@]}" src/headless.c out/headless/achievements.o -lstdc++ -lm -ldl -o out/headless/runtime-test
     out/headless/runtime-test
     VALKYRIA_PROBE=out/valkyria-probe python3 -m unittest discover -s tests -p test_probe.py
 fi

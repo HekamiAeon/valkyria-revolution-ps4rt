@@ -11,6 +11,24 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _achievements(game: Path, user_dir: Path, env: dict) -> None:
+    from trophy_catalog import prepare_catalog
+    # Never inherit another launch's catalog or state location.
+    env.pop('PS4RT_TROPHY_CATALOG', None)
+    env['PS4RT_ACHIEVEMENTS_DIR'] = str(user_dir / 'achievements')
+    try:
+        language = int(env.get('PS4RT_TROPHY_LANGUAGE', env.get('PS4RT_LANGUAGE', '1')))
+        if not 0 <= language <= 30:
+            language = 1
+        env['PS4RT_TROPHY_LANGUAGE'] = str(language)
+        catalog = prepare_catalog(game, user_dir, language)
+        if catalog is not None:
+            env['PS4RT_TROPHY_CATALOG'] = str(catalog)
+    except (OSError, ValueError, KeyError, UnicodeError) as error:
+        # Missing/damaged metadata disables achievements, never game launch.
+        print(f'Achievements unavailable: {error}', flush=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game', help='Your extracted, plaintext CUSA06810 game folder')
@@ -52,10 +70,11 @@ def main(argv=None):
         subprocess.run([sys.executable, str(ROOT / 'scripts' / script), str(game),
                         '--out', str(data)], check=True)
     remembered.write_text(str(game) + '\n')
+    env = os.environ.copy()
+    _achievements(game, data / 'user', env)
     if args.prepare_only:
         print(f'Prepared locally in {data}; original files were read only.')
         return 0
-    env = os.environ.copy()
     # Always restart the same extracted game and writable data directory.
     # Preserve optional runtime arguments without depending on the shell cwd.
     restart = [sys.executable, str(Path(__file__).resolve()),

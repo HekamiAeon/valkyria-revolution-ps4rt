@@ -115,10 +115,17 @@ int main(void) {
         assert(error_term()==DIALOG_NOT_INITIALIZED);
     }
 
-    /* Trophies: nothing unlocked. */
+    /* Missing catalog: explicit unavailable status, no invented unlocks/writes. */
+    unsetenv("PS4RT_TROPHY_CATALOG");
+    unsetenv("PS4RT_ACHIEVEMENTS_DIR");
+    int32_t context=0, trophy_handle=0;
+    assert(ps4rt_trophy_create_context(&context,1,0,0)==(int32_t)0x80551626);
+    assert(ps4rt_trophy_create_handle(&trophy_handle)==0);
     uint32_t flags[4]={~0u,~0u,~0u,~0u}, count=7;
-    assert(trophy_unlock_state(1,1,flags,&count)==0 && !flags[0] && !flags[3] && count==0);
-    assert(trophy_unlock_state(1,1,NULL,&count)==TROPHY_INVALID && trophy_release(0)==TROPHY_INVALID);
+    assert(ps4rt_trophy_unlock_state(context,trophy_handle,flags,&count)==(int32_t)0x80551609);
+    assert(flags[0]==~0u && count==7);
+    assert(ps4rt_trophy_unlock_state(context,trophy_handle,NULL,&count)==(int32_t)0x80551604);
+    assert(ps4rt_trophy_destroy_handle(trophy_handle)==0);
 
     float ratio=0; assert(safe_area(&ratio)==0 && ratio==1.0f && safe_area(NULL)==SYSTEM_PARAMETER);
     puts("services test: ok");

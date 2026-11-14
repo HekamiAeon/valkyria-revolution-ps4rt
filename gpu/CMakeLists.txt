@@ -343,3 +343,17 @@ add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
 target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 
+
+# Shared achievement service tests need no graphics device or guest process.
+add_executable(achievements-test EXCLUDE_FROM_ALL ../tests/test_achievements.cpp shim/ps4rt_achievements.cpp)
+target_include_directories(achievements-test PRIVATE shim)
+target_compile_options(achievements-test PRIVATE -UNDEBUG)
+add_test(NAME achievements COMMAND achievements-test)
+
+add_executable(achievements-ui-test EXCLUDE_FROM_ALL ../tests/test_achievements_ui.cpp
+    shim/ps4rt_achievements.cpp shim/ps4rt_achievements_ui.cpp
+    third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp)
+target_include_directories(achievements-ui-test PRIVATE shim third_party/imgui)
+target_compile_options(achievements-ui-test PRIVATE -UNDEBUG)
+add_test(NAME achievements-ui COMMAND achievements-ui-test)
