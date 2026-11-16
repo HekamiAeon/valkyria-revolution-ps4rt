@@ -88,6 +88,21 @@ int main() {
            ClassifyBuffer(384) == BufferRole::SmallSkeleton);
     assert(ClassifyBuffer(656) == BufferRole::Skeleton && ClassifyBuffer(64) == BufferRole::Other);
 
+    // Valkyria: the G-buffer as before (any blend/depth state), and the opaque depth-writing
+    // forward pass after lighting (history book, map terrain); not its blended draws, depth-test
+    // only draws, single-target passes (post, UI) or wider passes.
+    static_assert(ValkyriaMotionTargets(3, true, false) && ValkyriaMotionTargets(3, false, true));
+    static_assert(ValkyriaMotionTargets(2, true, false));
+    static_assert(!ValkyriaMotionTargets(2, true, true) && !ValkyriaMotionTargets(2, false, false));
+    static_assert(!ValkyriaMotionTargets(1, true, false) && !ValkyriaMotionTargets(4, true, false));
+    static_assert(!ValkyriaMotionTargets(0, true, false));
+    // Scene depth snapshot: before a full-screen quad writes depth (cutscene depth of field),
+    // never inside geometry passes (a floor quad of the G-buffer, the book's two targets).
+    static_assert(ValkyriaScreenPassWritesDepth(1, 4, 1, true) && ValkyriaScreenPassWritesDepth(1, 3, 1, true));
+    static_assert(!ValkyriaScreenPassWritesDepth(1, 4, 1, false));
+    static_assert(!ValkyriaScreenPassWritesDepth(3, 4, 1, true) && !ValkyriaScreenPassWritesDepth(2, 6, 1, true));
+    static_assert(!ValkyriaScreenPassWritesDepth(1, 7, 1, true) && !ValkyriaScreenPassWritesDepth(1, 4, 2, true));
+
     // Index ranges: reused between full scans, rescanned every Revalidate frames, trimmed.
     IndexRangeCache ranges;
     uint32_t scans = 0;
@@ -109,5 +124,5 @@ int main() {
     assert(JitterPhases(960, 1920) == 32);
     assert(JitterPhases(640, 1920) == 72);
     assert(JitterPhases(0, 1920) == 8);
-    std::puts("Motion history: PASS (ranges, restart, offsets, matching, capacity, gating, index cache, jitter)");
+    std::puts("Motion history: PASS (ranges, restart, offsets, matching, capacity, gating, Valkyria targets and depth snapshot, index cache, jitter)");
 }

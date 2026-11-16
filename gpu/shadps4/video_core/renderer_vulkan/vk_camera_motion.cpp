@@ -314,7 +314,7 @@ void CameraMotion::PreserveValkyriaDepth(VAddr address) {
             .image=valkyria_depth_image,.viewType=vk::ImageViewType::e2D,.format=depth.info.pixel_format,
             .subresourceRange={vk::ImageAspectFlagBits::eDepth,0,1,0,1}}));
         valkyria_depth_size=size; valkyria_depth_format=depth.info.pixel_format;
-        std::printf("Valkyria: preserve scene depth %ux%u before HUD clear\n",size.width,size.height);
+        std::printf("Valkyria: preserve scene depth %ux%u before the HUD clear or a full-screen depth write\n",size.width,size.height);
     }
     runtime.Transit(&depth,vk::ImageLayout::eTransferSrcOptimal,
                     vk::PipelineStageFlagBits2::eTransfer,vk::AccessFlagBits2::eTransferRead);

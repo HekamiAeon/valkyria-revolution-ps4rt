@@ -854,10 +854,17 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
                            Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerOff;
     {
         u32 bound = 0;
+        bool blended = false;
         for (s32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS && !skip_cb_binding; ++cb) {
-            bound += (regs.color_buffers[cb] && regs.color_target_mask.GetMask(cb)) ? 1 : 0;
+            if (!regs.color_buffers[cb] || !regs.color_target_mask.GetMask(cb)) continue;
+            ++bound;
+            blended |= regs.blend_control[cb].enable && !regs.color_buffers[cb].info.blend_bypass;
         }
-        const bool geometry_targets = Ps4RtSettings::Get().valkyria ? bound == 3 : bound >= 5;
+        const bool depth_write =
+            regs.depth_control.depth_enable && regs.depth_control.depth_write_enable;
+        const bool geometry_targets = Ps4RtSettings::Get().valkyria
+            ? Motion::ValkyriaMotionTargets(bound, depth_write, blended)
+            : bound >= 5;
         motion_possible = sel.motion_requested && Shader::MotionVectors::positions_address != 0 && geometry_targets &&
                           !regs.color_buffers[Shader::MotionVectors::Output] &&
                           regs.depth_buffer.DepthValid() &&

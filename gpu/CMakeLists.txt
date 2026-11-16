@@ -153,6 +153,8 @@ add_library(ps4rtgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES
     shadps4/core/libraries/kernel/equeue.cpp shadps4/core/libraries/kernel/event_flag.cpp ${AVPLAYER}
     shadps4/core/libraries/videodec/video_utils.cpp)
 add_dependencies(ps4rtgpu host_shaders)
+# Valkyria wide canvas UI hooks (C; SHIM_SOURCES lists only the C++ files).
+target_sources(ps4rtgpu PRIVATE shim/valkyria_wide_ui.c)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(ps4rtgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
@@ -262,6 +264,23 @@ target_include_directories(ui-composition-test PRIVATE ..)
 add_executable(valkyria-movie-test EXCLUDE_FROM_ALL ../tests/test_valkyria_movie.cpp)
 target_compile_options(valkyria-movie-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(valkyria-movie-test PRIVATE ..)
+
+add_executable(valkyria-ui-test EXCLUDE_FROM_ALL ../tests/test_valkyria_ui.cpp)
+target_compile_options(valkyria-ui-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(valkyria-ui-test PRIVATE ..)
+
+# Valkyria wide canvas: UI hooks and startup patches on synthetic images (no game data).
+add_executable(valkyria-wide-ui-test EXCLUDE_FROM_ALL ../tests/test_valkyria_wide_ui.c)
+target_compile_options(valkyria-wide-ui-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+    -Wno-misleading-indentation -fno-omit-frame-pointer)
+target_include_directories(valkyria-wide-ui-test PRIVATE ..)
+target_link_libraries(valkyria-wide-ui-test PRIVATE dl m)
+add_executable(valkyria-wide-patches-test EXCLUDE_FROM_ALL ../tests/test_valkyria_wide_patches.cpp
+    shim/valkyria_wide_patches.cpp shim/valkyria_wide_ui.c)
+target_compile_options(valkyria-wide-patches-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+    -Wno-misleading-indentation)
+target_include_directories(valkyria-wide-patches-test PRIVATE ..)
+target_link_libraries(valkyria-wide-patches-test PRIVATE dl m)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)

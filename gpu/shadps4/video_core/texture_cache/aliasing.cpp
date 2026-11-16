@@ -11,6 +11,15 @@
 
 namespace VideoCore {
 
+bool IsCompressedPoolReuse(const ImageInfo& lhs, const ImageInfo& rhs) {
+    // A view keeps the cached image's extent: a smaller texture sampled through it reads the
+    // old texture or the bytes of its neighbours. Same-size requests with fewer mips or
+    // layers remain views.
+    return lhs.props.is_block && rhs.props.is_block && lhs.pixel_format == rhs.pixel_format &&
+           (lhs.size != rhs.size || lhs.tile_mode != rhs.tile_mode ||
+            lhs.array_mode != rhs.array_mode || lhs.props.is_tiled != rhs.props.is_tiled);
+}
+
 std::optional<Extent3D> GetAliasCopyExtent(const ImageInfo& src, const ImageInfo& dst) {
     const bool same_layout =
         src.guest_address == dst.guest_address && src.num_bits == dst.num_bits &&

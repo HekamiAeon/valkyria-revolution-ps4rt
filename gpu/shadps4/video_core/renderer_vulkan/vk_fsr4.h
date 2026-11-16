@@ -45,6 +45,9 @@ public:
         float frame_ms, near_plane, far_plane, vertical_fov;
         float sharpness;
         bool sharpen, reset, auto_exposure;
+        /// Linear HDR scene colour (FSR's HDR input and auto exposure); false for a tonemapped
+        /// display-range frame, like FSR 3's context for the same input.
+        bool hdr = true;
     };
 
     /// Records FSR 4 into `frame.cmdbuf`; the output stays in General. False when FSR 4

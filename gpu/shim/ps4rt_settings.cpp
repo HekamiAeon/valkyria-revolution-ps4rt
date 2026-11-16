@@ -3,6 +3,7 @@
 #include "ps4rt_graphics.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,8 @@ const char* Path() {
     const char* env = std::getenv("PS4RT_CONFIG");
     return env && env[0] ? env : "ps4rt.ini";
 }
+
+bool confirmed_seen = false; // render_resolution_confirmed was in the file
 
 float Clamp(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
@@ -102,6 +105,9 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.frames_queued = Ps4RtGraphics::ParseFramesQueued(value.empty() ? -1 : i);
     } else if (key == "render_resolution") {
         v.render_resolution = Ps4RtGraphics::ParseResolution(value);
+    } else if (key == "render_resolution_confirmed") {
+        v.confirmed_render_resolution = Ps4RtGraphics::ParseResolution(value);
+        confirmed_seen = true;
     } else if (key == "engine_fps") {
         v.engine_fps = Ps4RtGraphics::ParseEngineFps(i);
     } else if (key == "deferred_readback") {
@@ -121,7 +127,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
-        for (int r = 0; r < OutputCount; ++r) {
+        if (value == "native") v.output_res = OutputNative;
+        for (int r = 1; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
                 v.output_res = r;
             }
@@ -139,6 +146,7 @@ Values& Get() {
 void Load(bool valkyria) {
     auto& v = Get();
     v.valkyria = valkyria;
+    confirmed_seen = false;
     if (valkyria) {
         v.upscaler = UpscalerFsr3;
         v.sharpen = false;
@@ -148,7 +156,7 @@ void Load(bool valkyria) {
         v.spatial_aa = false;
         v.rcas = false;
         v.rcas_strength = 35;
-        v.output_res = OutputCount - 1; // Fixed 3840x2160 host image, independent of monitor.
+        v.output_res = 3; // 3840x2160 (2x from the game's own 1080p), independent of monitor.
     }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -181,8 +189,6 @@ void Load(bool valkyria) {
         const char* motion = std::getenv("VALKYRIA_OBJECT_MOTION");
         ConfigureValkyriaUpscaler(std::getenv("VALKYRIA_UPSCALER"),
             motion ? std::strcmp(motion, "1") == 0 : v.object_motion.load());
-        // 720p cannot contain the native 1080p reconstruction input.
-        v.output_res = std::clamp(v.output_res.load(), 1, OutputCount - 1);
     }
     const std::pair<const char*, const char*> env_keys[] = {
         {"PS4RT_FSR_SHARPNESS", "sharpness"},        {"PS4RT_JITTER", "jitter"},
@@ -204,6 +210,33 @@ void Load(bool valkyria) {
         std::printf("Valkyria: %s graphics compilation\n",
                     v.async_shaders ? "asynchronous" : "synchronous");
     }
+    // A new render resolution is an attempt until a launch reaches the game with it: mark it in
+    // the file first, and return to the confirmed one when the mark is still there next time.
+    bool save = false;
+    if (valkyria) {
+        if (!confirmed_seen) v.confirmed_render_resolution = 0; // older files: native was confirmed
+        if (v.render_resolution == v.confirmed_render_resolution) {
+            v.restart_unconfirmed = false;
+        } else if (v.restart_unconfirmed) {
+            std::printf("Settings: the last launch at %s never reached the game; using %s again\n",
+                        Ps4RtGraphics::ResolutionLabel(v.render_resolution),
+                        Ps4RtGraphics::ResolutionLabel(v.confirmed_render_resolution));
+            v.render_resolution = v.confirmed_render_resolution;
+            v.restart_unconfirmed = false;
+            save = true;
+        } else {
+            v.restart_unconfirmed = true;
+            save = true;
+        }
+    }
+    if (valkyria) {
+        // Outputs follow the internal resolution (larger, same aspect, up to 3x): another
+        // choice is Native for this one.
+        const int r = std::clamp(v.render_resolution.load(), 0, int(Ps4RtGraphics::Resolutions.size()) - 1);
+        v.output_res = std::clamp(v.output_res.load(), 0, OutputCount - 1);
+        if (!OutputAllowed(Ps4RtGraphics::ResolutionWidths[r], Ps4RtGraphics::ResolutionHeights[r], v.output_res))
+            v.output_res = OutputNative;
+    }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
     v.startup_object_motion = v.object_motion;
@@ -217,6 +250,7 @@ void Load(bool valkyria) {
     v.startup_deferred_readback = v.deferred_readback;
     v.startup_stale_readback = v.stale_readback;
     v.startup_anisotropy = v.anisotropy;
+    if (save) Save();
 }
 
 bool GraphicsNeedRestart() {
@@ -226,6 +260,53 @@ bool GraphicsNeedRestart() {
            v.deferred_readback != v.startup_deferred_readback ||
            v.stale_readback != v.startup_stale_readback ||
            v.anisotropy != v.startup_anisotropy;
+}
+
+void ActivateCanvas(int width, int height) {
+    auto& v = Get();
+    v.canvas_width = width;
+    v.canvas_height = height;
+    v.active_render_width = width;
+    v.active_render_height = height;
+}
+
+void CanvasUnavailable(const char* problem) {
+    Get().canvas_problem = problem;
+}
+
+void SceneSize(int& width, int& height) {
+    const auto& v = Get();
+    width = v.canvas_width ? v.canvas_width : 1920;
+    height = v.canvas_width ? v.canvas_height : 1080;
+}
+
+bool OutputAllowed(int iw, int ih, int output) {
+    if (output == OutputNative) return true;
+    if (output < 0 || output >= OutputCount || iw <= 0 || ih <= 0) return false;
+    const int ow = OutputWidths[output], oh = OutputHeights[output];
+    const double in = double(iw) / ih, out = double(ow) / oh;
+    // At most 3x per axis, FSR's supported range (Ultra Performance): 1024x576 to 4K (3.75x)
+    // is left out; 1280x720 to 4K is exactly 3x.
+    return ow > iw && oh > ih && ow <= 3 * iw && oh <= 3 * ih && std::abs(out - in) <= 0.01 * in;
+}
+
+void OutputSize(int output, int& width, int& height) {
+    int w, h;
+    SceneSize(w, h);
+    width = w;
+    height = h;
+    if (output == OutputNative || !OutputAllowed(w, h, output)) return;
+    // Fit inside the chosen size at the scene's aspect: 2560x1080 -> 3414x1440 (thin bars).
+    const double s = std::min(double(OutputWidths[output]) / w, double(OutputHeights[output]) / h);
+    width = std::min(OutputWidths[output], (int(w * s + 0.5) + 1) & ~1);
+    height = std::min(OutputHeights[output], (int(h * s + 0.5) + 1) & ~1);
+}
+
+void ConfirmRenderResolution() {
+    auto& v = Get();
+    v.confirmed_render_resolution = v.startup_render_resolution;
+    v.restart_unconfirmed = false;
+    Save();
 }
 
 void ConfigureValkyriaUpscaler(const char* requested, bool object_motion) {
@@ -324,13 +405,16 @@ void Save() {
                  "upscaler=%s\npreset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
                  "reactive=%d\nobject_motion=%d\nreactive_scale=%.2f\nreactive_threshold=%.2f\nreactive_max=%.2f\n"
                  "debug_view=%d\nshow_fps=%d\nfsr4_auto_exposure=%d\nfsr4_invert_jitter=%d\n",
-                 UpscalerName(v.upscaler), v.preset.load(), int(v.sharpen.load()),
+                 UpscalerName(v.upscaler.load()),
+                 v.preset.load(), int(v.sharpen.load()),
                  v.sharpness.load(), int(v.jitter.load()), int(v.reactive.load()),
                  int(v.object_motion.load()),
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
-    std::fprintf(file, "output_res=%dx%d\n", OutputWidths[v.output_res], OutputHeights[v.output_res]);
+    if (v.output_res == OutputNative) std::fputs("output_res=native\n", file);
+    else std::fprintf(file, "output_res=%dx%d\n", OutputWidths[v.output_res], OutputHeights[v.output_res]);
+    const int last_resolution = int(Ps4RtGraphics::Resolutions.size()) - 1;
     std::fprintf(file,
                  "overlay_fps=%d\noverlay_frametime=%d\noverlay_upscaler=%d\noverlay_gpu=%d\n"
                  "overlay_cpu=%d\noverlay_ram=%d\noverlay_vram=%d\noverlay_scale=%d\noverlay_corner=%d\n"
@@ -342,12 +426,13 @@ void Save() {
     std::fprintf(file,
                  "display_mode=%s\nvsync=%d\nfps_limit=%d\nasync_shaders=%d\n"
                  "fsr1=%d\nrcas=%d\nrcas_strength=%d\nframes_queued=%d\n"
-                 "render_resolution=%s\nengine_fps=%d\ndeferred_readback=%d\nstale_readback=%d\n"
-                 "restart_unconfirmed=%d\n",
+                 "render_resolution=%s\nrender_resolution_confirmed=%s\nengine_fps=%d\n"
+                 "deferred_readback=%d\nstale_readback=%d\nrestart_unconfirmed=%d\n",
                  Ps4RtGraphics::DisplayModeKeys[std::clamp(v.display_mode.load(), 0, 2)].data(),
                  int(v.vsync.load()), v.fps_limit.load(), int(v.async_shaders.load()),
                  int(v.fsr1.load()), int(v.rcas.load()), v.rcas_strength.load(), v.frames_queued.load(),
-                 Ps4RtGraphics::Resolutions[std::clamp(v.render_resolution.load(), 0, 5)].data(),
+                 Ps4RtGraphics::Resolutions[std::clamp(v.render_resolution.load(), 0, last_resolution)].data(),
+                 Ps4RtGraphics::Resolutions[std::clamp(v.confirmed_render_resolution, 0, last_resolution)].data(),
                  v.engine_fps.load(), int(v.deferred_readback.load()), int(v.stale_readback.load()),
                  int(v.restart_unconfirmed.load()));
     std::fprintf(file, "anisotropy=%d\nvibration=%d\n", v.anisotropy.load(), v.vibration.load());

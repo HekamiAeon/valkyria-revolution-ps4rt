@@ -200,8 +200,8 @@ private:
     void EliminateFastClear();
 
     void UpdateDynamicState(const GraphicsPipeline* pipeline, bool is_indexed,
-                            float movie_x_offset = 0.f) const;
-    void UpdateViewportScissorState(float movie_x_offset = 0.f) const;
+                            float movie_x_offset = 0.f, float movie_scale = 1.f) const;
+    void UpdateViewportScissorState(float movie_x_offset = 0.f, float movie_scale = 1.f) const;
     void UpdateDepthStencilState() const;
     /// ps4rt: the squaring pipeline of a scaled MIN/MAX blend when this draw can use it.
     vk::Pipeline SquarePass(const GraphicsPipeline& pipeline) const;
@@ -336,6 +336,7 @@ private:
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;
     u64 motion_geometry{};    ///< vertex-stream identity of the current direct draw
+    bool movie_positions = false; ///< recorded-movie quad positions fitted to the canvas
     bool gbuffer_draw = false;
     std::unique_ptr<TemporalUpscaler> upscaler; // ps4rt: FSR (docs/upscaler.md)
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels

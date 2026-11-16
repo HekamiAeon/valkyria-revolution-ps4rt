@@ -318,8 +318,10 @@ bool TemporalUpscaler::OnFrameStart() {
     const int output = settings.output_res.load();
     const bool output_changed = !scaled_session && applied_output != output;
     if (output_changed) {
-        target_width = Ps4RtSettings::OutputWidths[output];
-        target_height = Ps4RtSettings::OutputHeights[output];
+        int output_width, output_height;
+        Ps4RtSettings::OutputSize(output, output_width, output_height);
+        target_width = output_width;
+        target_height = output_height;
         std::printf("Output resolution: %ux%u (live)\n", target_width, target_height);
         failed = false;
         fsr4_failed = false;
@@ -338,7 +340,11 @@ bool TemporalUpscaler::OnFrameStart() {
     if (!scaled_session) {
         if (settings.valkyria) {
             auto size=camera_motion.RenderSize();
-            if (!size[0] || !size[1]) size={1920,1080};
+            if (!size[0] || !size[1]) {
+                int scene_width, scene_height;
+                Ps4RtSettings::SceneSize(scene_width, scene_height);
+                size={u32(scene_width),u32(scene_height)};
+            }
             scene_targets.SetSize({size[0],size[1]});
         } else {
             scene_targets.SetSize(SceneResolution::ForPreset(active ? preset : 0,
@@ -368,8 +374,28 @@ bool TemporalUpscaler::OnFrameStart() {
     snapshot_taken = false;
     opaque_valid = false;
     mask_ready = false;
+    // A talk portrait draws its character as the frame's scene, then shows it as a UI image
+    // over a background restored from a cache: the upscaler never sees that scene, and its
+    // jitter would shake the portrait. Decided from the previous frame (portraits persist).
+    const bool offscreen = settings.valkyria && !frame_from_scene;
+    if (offscreen != scene_offscreen) {
+        std::printf("Valkyria: scene %s the upscaled frame, jitter %s\n",
+                    offscreen ? "outside" : "back in", offscreen ? "paused" : "resumed");
+    }
+    scene_offscreen = offscreen;
+    frame_from_scene = true;
+    // The pencil sketch leaves only thin outlines on flat paper. FSR 4 keeps moved outlines in
+    // its history as trails of copies (FSR 3.1 clamps them away): each sketch frame is upscaled
+    // on its own, without jitter, which needs the history it no longer has.
+    if (sketch_frame != sketch) {
+        std::printf("Valkyria: pencil sketch %s\n", sketch_frame ? "on" : "off");
+    }
+    sketch = sketch_frame;
+    sketch_frame = false;
+    scene_writes.clear();
+    last_scene_write = {};
     // Halton(2, 3); the menu or toggle 1 << 25 disables it.
-    if (!jitter_on) {
+    if (!jitter_on || scene_offscreen || (sketch && UseFsr4())) {
         jitter = {};
         return changed;
     }
@@ -1113,7 +1139,8 @@ void TemporalUpscaler::Run() {
         dispatched = true;
     } else if (UseFsr4()) {
         dispatched = RecordFsr4(cmdbuf, {input_color, input_color_view, w, h},
-                                {input_depth, input_depth_view, w, h}, w, h, ow, oh, frame_ms);
+                                {input_depth, input_depth_view, w, h}, w, h, ow, oh, frame_ms,
+                                true);
     } else if (UseDlss()) {
         dispatched = RecordDlss(
             cmdbuf,
@@ -1309,6 +1336,16 @@ float TemporalUpscaler::SceneMipBias() const {
     return render > 0.0f && render < output ? std::log2(render / output) : 0.0f;
 }
 
+bool TemporalUpscaler::RenderTarget(u32 w, u32 h) const {
+    if (scaled_session) {
+        return w >= render_width && h >= render_height && w < render_width + 8 &&
+               h < render_height + 8;
+    }
+    int scene_width, scene_height;
+    Ps4RtSettings::SceneSize(scene_width, scene_height);
+    return w == u32(scene_width) && h == u32(scene_height);
+}
+
 bool TemporalUpscaler::Scaled() const {
     // Valkyria reconstructs the tonemapped scene before HUD composition even at
     // 1:1 output (Native AA). The legacy unscaled HDR path identifies Ps4Rt passes.
@@ -1327,10 +1364,30 @@ void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
         image.info.size.height == depth.info.size.height) {
         ldr_target = color;
     }
+    if (Ps4RtSettings::Get().valkyria && color != last_scene_write) {
+        last_scene_write = color;
+        const VAddr address = image.info.guest_address;
+        if (std::find(scene_writes.begin(), scene_writes.end(), address) == scene_writes.end()) {
+            scene_writes.push_back(address);
+        }
+    }
+}
+
+void TemporalUpscaler::OnFrameCopy(u64 vs_hash, u64 ps_hash, VideoCore::ImageId color,
+                                   VAddr source) {
+    // The copy of the finished frame into the UI target (the HUD's shaders, unblended). Its
+    // source was drawn after the G-buffer in normal frames; a talk portrait copies a cached
+    // background drawn before it instead.
+    if (!Ps4RtSettings::Get().valkyria || ui_phase || !color || color != ldr_target ||
+        vs_hash != 0xbc13f33e || ps_hash != 0x505ccebb || !source) {
+        return;
+    }
+    frame_from_scene =
+        std::find(scene_writes.begin(), scene_writes.end(), source) != scene_writes.end();
 }
 
 void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
-                              VideoCore::ImageId depth, bool native_viewport, bool blended,u64 ps_hash) {
+                              VideoCore::ImageId depth, bool native_viewport, bool layer,u64 ps_hash) {
     const bool valkyria=Ps4RtSettings::Get().valkyria;
     if (valkyria && (!Active() || !camera_motion.HasValkyriaDepth())) return;
     if (!Scaled() && vs_hash == ui_trigger_vs) done_this_frame = true;
@@ -1349,7 +1406,10 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     }
     const auto& image = texture_cache.GetImage(color);
     const bool movie = valkyria ?
-        (vs_hash==0xbc13f33e && ps_hash==0x505ccebb && blended) :
+        // The first UI layer over the finished frame; the talk portrait's stencil mask (alpha,
+        // depth and stencil writes) comes before its first blended draw and must be drawn into
+        // the output-size UI depth: the guest stencil does not reach it (no D32S8 blit on RADV).
+        (vs_hash==0xbc13f33e && ps_hash==0x505ccebb && layer) :
         (vs_hash==ui_trigger_vs || UiComposition::MovieShader(vs_hash) ||
          (scaled_session && native_viewport));
     const bool ui_draw = movie &&
@@ -1673,9 +1733,13 @@ void TemporalUpscaler::RunScaled() {
                               source_width, source_height},
                              w, h, ow, oh, frame_ms, false);
         } else {
+            // The game's tonemapped 8-bit frame is display-range input, as FSR 3's context is
+            // made for it (EnsureResources hdr false). Read as HDR with auto exposure, FSR 4
+            // re-exposed it and pulsed brighter and dimmer past bright lighting (CUSA16429).
+            if (sketch || sketch_frame) reset = true; // see OnFrameStart
             ok4 = RecordFsr4(cmdbuf, {color_image, color_view, source_width, source_height},
                             {depth_image, depth_view, source_width, source_height}, w, h, ow,
-                            oh, frame_ms);
+                            oh, frame_ms, false);
         }
         if (ok4) {
             if (Ps4RtSettings::Get().valkyria) {
@@ -2042,7 +2106,7 @@ bool TemporalUpscaler::UseFsr4() const {
 
 bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color,
                                   Fsr4Upscaler::Image depth, u32 w, u32 h, u32 ow, u32 oh,
-                                  float frame_ms) {
+                                  float frame_ms, bool hdr) {
     const auto& settings = Ps4RtSettings::Get();
     // Same jitter convention as FSR 3; the menu (or toggle 1 << 26) flips it for tests.
     const float sign =
@@ -2066,6 +2130,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .sharpen = settings.sharpen,
         .reset = reset,
         .auto_exposure = settings.fsr4_auto_exposure,
+        .hdr = hdr,
     });
     // The menu shows the reason; it outlives this frame (FSR 4 keeps its last message).
     static std::string shown;

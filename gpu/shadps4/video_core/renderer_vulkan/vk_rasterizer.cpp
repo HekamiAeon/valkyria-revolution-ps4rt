@@ -4,6 +4,8 @@
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "video_core/renderer_vulkan/valkyria_movie_composition.h"
+#include "video_core/renderer_vulkan/valkyria_ui_composition.h"
+#include "video_core/renderer_vulkan/valkyria_pixel_camera.h"
 #include "ps4rt_toggles.h"
 #include "ps4rt_settings.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
@@ -32,6 +34,13 @@
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace Vulkan {
+
+// ps4rt: a UI layer over the finished frame: blended, or writing no RGB (only alpha, depth or
+// stencil: a mask for the UI drawn after it). An unblended RGB write is the frame itself.
+static bool UiLayerDraw(const AmdGpu::Regs& regs) {
+    return (regs.blend_control[0].enable && !regs.color_buffers[0].info.blend_bypass) ||
+           !(regs.color_target_mask.GetMask(0) & 7u);
+}
 
 static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
     // TODO(roamic): Add support for multiple viewports and geometry shaders when ViewportIndex
@@ -984,14 +993,12 @@ void Rasterizer::DiagPassBoundary(bool force) {
     diag_addresses = force ? std::array<VAddr, 8>{} : addresses;
 }
 
-static std::optional<ValkyriaMovie::Layout> FullscreenMovieLayout(
-    const GraphicsPipeline& pipeline, const AmdGpu::Regs& regs, Core::MemoryManager& memory,
-    u32 width, u32 height, std::array<float, 2> scale) {
-    static const bool enabled = [] {
-        const char* value = std::getenv("PS4RT_VALKYRIA_MOVIE_PILLARBOX");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    if (!enabled || !Ps4RtSettings::Get().valkyria || regs.IsClipDisabled() ||
+// The recorded-movie quad: 1920x1080 live pixels drawn through an untranslated pixel
+// transform and viewport on a native canvas. Returns its position stream.
+static std::optional<AmdGpu::Buffer> MovieQuad(const GraphicsPipeline& pipeline,
+                                               const AmdGpu::Regs& regs,
+                                               Core::MemoryManager& memory) {
+    if (!Ps4RtSettings::Get().canvas_width || !Ps4RtSettings::Get().valkyria || regs.IsClipDisabled() ||
         regs.num_indices != 4 || regs.num_instances.NumInstances() != 1) return {};
     const auto& vs = pipeline.GetStage(Shader::SwStage::Vertex);
     const auto* ps = pipeline.GetStages()[u32(Shader::SwStage::Fragment)];
@@ -1002,10 +1009,8 @@ static std::optional<ValkyriaMovie::Layout> FullscreenMovieLayout(
     if (first_vertex || first_instance) return {};
     const auto& vp = regs.viewports[0];
     if (std::abs(vp.xoffset - vp.xscale) > 0.01f ||
-        std::abs(vp.yoffset + vp.yscale) > 0.01f) return {};
-    const auto layout = ValkyriaMovie::Fit(vp.xscale * 2, std::abs(vp.yscale * 2),
-                                          width, height, scale);
-    if (!layout) return {};
+        std::abs(vp.yoffset + vp.yscale) > 0.01f ||
+        !ValkyriaWide::Native(vp.xscale * 2, std::abs(vp.yscale * 2))) return {};
 
     // Verify an untranslated fullscreen movie transform, as seen in the native trace.
     bool transform = false;
@@ -1025,16 +1030,59 @@ static std::optional<ValkyriaMovie::Layout> FullscreenMovieLayout(
     for (const auto& attribute : fetch->attributes) {
         if (attribute.semantic != 0) continue;
         const auto buffer = attribute.GetSharp(vs);
+        const auto format = buffer.GetDataFmt();
         constexpr u64 bytes = 4 * 32;
         if (!buffer.Valid() || buffer.GetStride() != 32 || buffer.GetSize() < bytes ||
+            buffer.GetSize() > 64 * 1024 ||
+            buffer.GetNumberFmt() != AmdGpu::NumberFormat::Float ||
+            (format != AmdGpu::DataFormat::Format32_32 &&
+             format != AmdGpu::DataFormat::Format32_32_32 &&
+             format != AmdGpu::DataFormat::Format32_32_32_32) ||
             !memory.IsValidGpuMapping(buffer.base_address, 0) ||
-            memory.ClampRangeSize(buffer.base_address, bytes) != bytes) return {};
+            memory.ClampRangeSize(buffer.base_address, buffer.GetSize()) != buffer.GetSize())
+            return {};
         std::array<std::array<float, 2>, 4> points;
         for (size_t i = 0; i < points.size(); ++i) {
             std::memcpy(points[i].data(),
                         reinterpret_cast<const void*>(buffer.base_address + i * 32), 8);
         }
-        return ValkyriaMovie::FullscreenQuad(points) ? layout : std::nullopt;
+        return ValkyriaMovie::FullscreenQuad(points) ? std::optional(buffer) : std::nullopt;
+    }
+    return {};
+}
+
+static std::optional<ValkyriaMovie::Layout> FullscreenMovieLayout(
+    const GraphicsPipeline& pipeline, const AmdGpu::Regs& regs, Core::MemoryManager& memory,
+    u32 width, u32 height, std::array<float, 2> scale) {
+    // Recorded movies stay 16:9: scaled to the canvas height, centred on a wide canvas.
+    if (!MovieQuad(pipeline, regs, memory)) return {};
+    const auto& vp = regs.viewports[0];
+    return ValkyriaMovie::Fit(vp.xscale * 2, std::abs(vp.yscale * 2), width, height, scale);
+}
+
+static std::optional<ValkyriaUi::Layout> BookPageLayout(
+    const GraphicsPipeline& pipeline, const AmdGpu::Regs& regs, Core::MemoryManager& memory,
+    u32 width, u32 height, std::array<float, 2> scale) {
+    if (!Ps4RtSettings::Get().canvas_width || !Ps4RtSettings::Get().valkyria || width != 960 || height != 1080 ||
+        regs.IsClipDisabled()) return {};
+    const auto& vs = pipeline.GetStage(Shader::SwStage::Vertex);
+    const auto* ps = pipeline.GetStages()[u32(Shader::SwStage::Fragment)];
+    if (vs.pgm_hash != 0xbc13f33e || !ps || ps->pgm_hash != 0x505ccebb) return {};
+    const auto& vp = regs.viewports[0];
+    if (std::abs(vp.xoffset - vp.xscale) > 0.01f ||
+        std::abs(vp.yoffset + vp.yscale) > 0.01f) return {};
+    for (const auto& resource : vs.buffers) {
+        if (resource.IsSpecial()) continue;
+        const auto buffer = resource.GetSharp(vs);
+        constexpr u64 bytes = 56 * sizeof(float);
+        if (!buffer.Valid() || buffer.GetSize() < bytes ||
+            !memory.IsValidGpuMapping(buffer.base_address, 0) ||
+            memory.ClampRangeSize(buffer.base_address, bytes) != bytes) continue;
+        std::array<float, 56> data;
+        std::memcpy(data.data(), reinterpret_cast<const void*>(buffer.base_address), bytes);
+        const auto layout = ValkyriaUi::BookPage(vp.xscale * 2, std::abs(vp.yscale * 2),
+                                                width, height, scale, data);
+        if (layout) return layout;
     }
     return {};
 }
@@ -1087,8 +1135,33 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
                          cb_descs[0].first, db_desc.first,
                          UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2),
-                         regs.blend_control[0].enable && !regs.color_buffers[0].info.blend_bypass,
+                         UiLayerDraw(regs),
                          pipeline->GetStage(Shader::SwStage::Fragment).pgm_hash);
+        // Valkyria: what the finished frame is copied from (scene or cached background).
+        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        if (Ps4RtSettings::Get().valkyria && cb_descs[0].first && !UiLayerDraw(regs) &&
+            regs.num_indices <= 6 && ps && !ps->images.empty()) {
+            upscaler->OnFrameCopy(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
+                                  ps->pgm_hash, cb_descs[0].first,
+                                  ps->images[0].GetSharp(*ps).Address());
+        }
+        // Valkyria: the scene composite's pencil-sketch weights (the smokescreen's paper look).
+        if (Ps4RtSettings::Get().valkyria && ps && ps->pgm_hash == 0xbea77ad8) {
+            for (const auto& resource : ps->buffers) {
+                if (resource.IsSpecial()) continue;
+                const auto constants = resource.GetSharp(*ps);
+                constexpr size_t bytes = 184 * sizeof(float);
+                if (!constants.Valid() || constants.GetSize() < bytes ||
+                    !memory->IsValidGpuMapping(constants.base_address, 0) ||
+                    memory->ClampRangeSize(constants.base_address, bytes) != bytes) continue;
+                float weights[2];
+                std::memcpy(weights, reinterpret_cast<const void*>(constants.base_address +
+                                                                   182 * sizeof(float)),
+                            sizeof(weights));
+                upscaler->OnSketch(weights[0] > 0.0f || weights[1] > 0.0f);
+                break;
+            }
+        }
     }
     const PreparedDraw* draw_prepared = bind_prepared;
     // ps4rt: vertex and index buffers are resolved while the helper binds textures (their
@@ -1218,7 +1291,16 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const auto movie_layout = state.num_color_attachments == 1
         ? FullscreenMovieLayout(*pipeline, regs, *memory, state.width, state.height, target_scale)
         : std::nullopt;
-    UpdateDynamicState(pipeline, is_indexed, movie_layout ? float(movie_layout->left) : 0.f);
+    const auto book_layout = state.num_color_attachments == 1
+        ? BookPageLayout(*pipeline, regs, *memory, state.width, state.height, target_scale)
+        : std::nullopt;
+    // Movie positions already fitted to the canvas (ResolveVertexBuffers) keep the viewport.
+    const bool movie_viewport = movie_layout && !movie_positions;
+    const float layout_x = book_layout ? book_layout->x_offset
+                                      : movie_viewport ? float(movie_layout->left) : 0.f;
+    const float layout_scale = book_layout ? book_layout->scale
+                                          : movie_viewport ? movie_layout->viewport_scale : 1.f;
+    UpdateDynamicState(pipeline, is_indexed, layout_x, layout_scale);
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
 
@@ -1233,7 +1315,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const u32 first_vertex = vertex_offset;
     const u32 first_instance = instance_offset;
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
-        if (movie_layout) {
+        if (movie_layout && movie_layout->left && movie_layout->right) { // no bars at 16:9
             const auto& m = *movie_layout;
             const vk::ClearAttachment clear{
                 .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -1261,9 +1343,11 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, square);
             draw();
         }
+
     });
     if (FrameCapture::Active()) {
-        if (movie_layout) FrameCapture::Note("\n  Valkyria fullscreen movie: centred 16:9; black side areas");
+        if (movie_layout) FrameCapture::Note(movie_layout->left ? "\n  Valkyria fullscreen movie: centred 16:9; black side areas" : movie_positions ? "\n  Valkyria fullscreen movie: positions scaled to the 16:9 canvas" : "\n  Valkyria fullscreen movie: scaled to the 16:9 canvas");
+        if (book_layout) FrameCapture::Note("\n  Valkyria book page: original offscreen coordinates");
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
         if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {
@@ -1334,7 +1418,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
                          cb_descs[0].first, db_desc.first,
                          UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2),
-                         regs.blend_control[0].enable && !regs.color_buffers[0].info.blend_bypass,
+                         UiLayerDraw(regs),
                          pipeline->GetStage(Shader::SwStage::Fragment).pgm_hash);
     }
     if (!BindResources(pipeline)) {
@@ -1342,6 +1426,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
     const auto state = BeginRendering(pipeline);
 
+    draw_inputs = {}; // indirect: no direct-draw index range for vertex-stream corrections
     BindVertexBuffers(pipeline);
     if (is_indexed) {
         BindIndexBuffer();
@@ -1874,6 +1959,7 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                                       const PreparedDraw* prepared) {
     const auto& regs = Regs();
     auto& v = vertex_binds;
+    movie_positions = false;
     v.num_buffers = 0;
     v.host_buffers.clear();
     v.host_offsets.clear();
@@ -2010,6 +2096,142 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     }
 
     v.num_buffers = static_cast<u32>(guest_buffers.size());
+
+    if (const auto quad = MovieQuad(*pipeline, regs, *memory)) {
+        const auto& vp = regs.viewports[0];
+        const auto fit = ValkyriaMovie::ShrinkPositions(vp.xscale * 2, std::abs(vp.yscale * 2));
+        if (!fit) return;
+        const size_t bytes = quad->GetSize();
+        std::vector<std::byte> copy(bytes);
+        std::memcpy(copy.data(), reinterpret_cast<const void*>(quad->base_address), bytes);
+        for (size_t i = 0; i < 4; ++i) {
+            float p[2];
+            std::memcpy(p, copy.data() + i * 32, sizeof(p));
+            p[0] = p[0] * fit->scale + fit->left;
+            p[1] *= fit->scale;
+            std::memcpy(copy.data() + i * 32, p, sizeof(p));
+        }
+        auto& stream = buffer_cache.GetStreamBuffer();
+        const u64 offset = stream.Copy(copy.data(), bytes, 16);
+        for (u32 i = 0; i < guest_buffers.size(); ++i) {
+            if (guest_buffers[i].base_address != quad->base_address ||
+                guest_buffers[i].GetStride() != 32) continue;
+            host_buffers[i] = stream.Handle(); host_offsets[i] = offset;
+            movie_positions = true;
+        }
+        return;
+    }
+
+    // Native canvas: two fixes rewrite a fresh copy of this direct draw's positions (the
+    // source mesh and its other attributes stay intact).
+    //  - Content drawn through the engine's pixel camera (the paper fog) is authored in stock
+    //    1920x1080 pixels (valkyria_pixel_camera.h).
+    //  - Full-screen UI quads sized in screen pixels but scaled again by the GUI root
+    //    (valkyria_ui_composition.h): positions divided by the GUI scale.
+    const auto& settings = Ps4RtSettings::Get();
+    if (!settings.canvas_width || !settings.valkyria || !fetch || regs.IsClipDisabled() ||
+        draw_inputs.pipeline != pipeline) return;
+    const auto& pixel_vp = regs.viewports[0];
+    const float pixel_width = pixel_vp.xscale * 2, pixel_height = std::abs(pixel_vp.yscale * 2);
+    if (std::abs(pixel_vp.xoffset - pixel_vp.xscale) > .01f ||
+        std::abs(pixel_vp.yoffset + pixel_vp.yscale) > .01f ||
+        !ValkyriaWide::Native(pixel_width, pixel_height)) return;
+    const auto& pixel_vs = pipeline->GetStage(Shader::SwStage::Vertex);
+    const auto [pixel_first_vertex, pixel_first_instance] = GetDrawOffsets(regs, pixel_vs, fetch);
+    const u32 pixel_count = regs.num_indices;
+    if (pixel_first_vertex || pixel_first_instance || !pixel_count || pixel_count > 65536) return;
+    std::array<float, 56> constants;
+    bool camera = false;
+    std::optional<float> gui_scale;
+    for (const auto& resource : pixel_vs.buffers) {
+        if (resource.IsSpecial()) continue;
+        const auto uniform = resource.GetSharp(pixel_vs);
+        constexpr size_t uniform_bytes = sizeof(constants);
+        if (!uniform.Valid() || uniform.GetSize() < uniform_bytes ||
+            !memory->IsValidGpuMapping(uniform.base_address, 0) ||
+            memory->ClampRangeSize(uniform.base_address, uniform_bytes) != uniform_bytes) continue;
+        std::memcpy(constants.data(), reinterpret_cast<const void*>(uniform.base_address), uniform_bytes);
+        camera = ValkyriaPixelCamera::Camera(pixel_width, pixel_height, constants);
+        if (!camera && pixel_count <= 6)
+            gui_scale = ValkyriaUi::PixelScreenQuadScale(pixel_width, pixel_height, constants);
+        if (camera || gui_scale) break;
+    }
+    if (!camera && !gui_scale) return;
+    for (const auto& attribute : fetch->attributes) {
+        if (attribute.semantic != 0) continue;
+        const auto source = attribute.GetSharp(pixel_vs);
+        const auto format = source.GetDataFmt();
+        const u32 components = format == AmdGpu::DataFormat::Format32_32 ? 2
+                             : format == AmdGpu::DataFormat::Format32_32_32 ? 3
+                             : format == AmdGpu::DataFormat::Format32_32_32_32 ? 4 : 0;
+        const u32 stride = source.GetStride();
+        const size_t bytes = source.GetSize();
+        if (!source.Valid() || !components || source.GetNumberFmt() != AmdGpu::NumberFormat::Float ||
+            stride < components * 4 || bytes < stride || bytes > 256 * 1024 ||
+            !memory->IsValidGpuMapping(source.base_address, 0) ||
+            memory->ClampRangeSize(source.base_address, bytes) != bytes) return;
+        std::vector<u8> used(bytes / stride);
+        if (draw_inputs.is_indexed) {
+            const bool index16 = regs.index_buffer_type.index_type == AmdGpu::IndexType::Index16;
+            const u32 index_size = index16 ? sizeof(u16) : sizeof(u32);
+            const VAddr indices = regs.index_base_address.Address<VAddr>() +
+                                  draw_inputs.index_offset * index_size;
+            const size_t index_bytes = size_t(pixel_count) * index_size;
+            if (!memory->IsValidGpuMapping(indices, 0) ||
+                memory->ClampRangeSize(indices, index_bytes) != index_bytes) return;
+            const u32 restart = (regs.enable_primitive_restart & 1) ? (index16 ? 0xffffu : ~0u) : 0;
+            for (u32 i = 0; i < pixel_count; ++i) {
+                u32 index = 0;
+                std::memcpy(&index, reinterpret_cast<const void*>(indices + i * index_size), index_size);
+                if (restart && index == restart) continue;
+                if (index >= used.size()) return;
+                used[index] = 1;
+            }
+        } else {
+            if (pixel_count > used.size()) return;
+            std::fill_n(used.begin(), pixel_count, u8{1});
+        }
+        const auto* data = reinterpret_cast<const std::byte*>(source.base_address);
+        std::optional<ValkyriaPixelCamera::Transform> transform;
+        if (camera) {
+            const auto extent = ValkyriaPixelCamera::Measure(data, stride, components, used, constants);
+            if (extent) transform = ValkyriaPixelCamera::Fit(pixel_width, pixel_height, constants, *extent);
+        } else {
+            std::vector<std::array<float, 2>> points;
+            for (size_t i = 0; i < used.size(); ++i) {
+                if (!used[i]) continue;
+                auto& point = points.emplace_back();
+                std::memcpy(point.data(), data + i * stride, sizeof(point));
+            }
+            if (ValkyriaUi::PixelScreenQuad(pixel_width, pixel_height, points))
+                transform = ValkyriaPixelCamera::Transform{1 / *gui_scale, 1 / *gui_scale, 1, 0, 0};
+        }
+        if (!transform) return;
+        std::vector<std::byte> copy(data, data + bytes);
+        ValkyriaPixelCamera::Apply(copy.data(), stride, components, used, *transform);
+        auto& stream = buffer_cache.GetStreamBuffer();
+        const u64 offset = stream.Copy(copy.data(), bytes, 16);
+        for (u32 i = 0; i < guest_buffers.size(); ++i) {
+            if (guest_buffers[i].base_address != source.base_address ||
+                guest_buffers[i].GetStride() != stride) continue;
+            host_buffers[i] = stream.Handle(); host_offsets[i] = offset;
+        }
+        if (FrameCapture::Active()) {
+            char note[160];
+            if (camera) {
+                std::snprintf(note, sizeof(note),
+                    "\n  Valkyria pixel camera: %s, positions x*%.4f+%.1f y*%.4f+%.1f z*%.4f; fresh copy only",
+                    transform->kx == transform->ky ? "stock framing" : "full-width sheet",
+                    transform->kx, transform->ox, transform->ky, transform->oy, transform->kz);
+            } else {
+                std::snprintf(note, sizeof(note),
+                    "\n  Valkyria screen-pixel quad under GUI scale %.4f: positions / %.4f; fresh copy only",
+                    *gui_scale, *gui_scale);
+            }
+            FrameCapture::Note(note);
+        }
+        return;
+    }
 }
 
 void Rasterizer::BindIndexBuffer(u32 index_offset) {
@@ -3055,9 +3277,14 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
              regs.depth_control.depth_write_enable) ||
             texture_cache.IsMetaCleared(htile_address, slice);
         const bool is_stencil_clear = regs.depth_render_control.stencil_clear_enable;
-        // Preserve the selected attachment before either a register or HTILE clear.
-        // This also covers indirect draws, which have a separate recording path.
-        if (is_depth_clear && Ps4RtSettings::Get().valkyria &&
+        // Preserve the selected attachment before either a register or HTILE clear, or before
+        // a full-screen pass writes it (motion_history.h). This also covers indirect draws,
+        // which have a separate recording path.
+        const bool screen_depth_write = Motion::ValkyriaScreenPassWritesDepth(
+            std::popcount(key.mrt_mask & ~(key.motion_vectors ? 1u << Shader::MotionVectors::Output : 0u)),
+            regs.num_indices, regs.num_instances.NumInstances(),
+            regs.depth_control.depth_enable && regs.depth_control.depth_write_enable);
+        if ((is_depth_clear || screen_depth_write) && Ps4RtSettings::Get().valkyria &&
             upscaler->Enabled() && Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerOff) {
             camera_motion->PreserveValkyriaDepth(image.info.guest_address);
         }
@@ -3183,14 +3410,18 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             // The UI movie viewport is now 1920x1080 even when the scene is 960x540.
             // A native viewport (or native window-space UI vertices) must not be doubled
             // again. The final display copy still uses the guest render-size coordinates.
+            // The native UI size is the internal resolution the game renders at.
             const auto& viewport = regs.viewports[0];
+            int scene_width, scene_height;
+            Ps4RtSettings::SceneSize(scene_width, scene_height);
             const bool native_coordinates = redirect.native_ui &&
-                (UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2) ||
+                (UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2,
+                                               scene_width, scene_height) ||
                  (regs.IsClipDisabled() && !regs.viewport_control.xscale_enable &&
                   !regs.viewport_control.yscale_enable));
             target_scale = UiComposition::Scale(guest_extent.first, guest_extent.second,
                                                 redirect.width, redirect.height,
-                                                native_coordinates);
+                                                native_coordinates, scene_width, scene_height);
         }
     }
 
@@ -3421,8 +3652,8 @@ void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
 }
 
 void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool is_indexed,
-                                    float movie_x_offset) const {
-    UpdateViewportScissorState(movie_x_offset);
+                                    float movie_x_offset, float movie_scale) const {
+    UpdateViewportScissorState(movie_x_offset, movie_scale);
     UpdateDepthStencilState();
     UpdatePrimitiveState(is_indexed);
     UpdateRasterizationState();
@@ -3435,7 +3666,7 @@ void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool
                              [&](auto&& command) { scheduler.Record(std::move(command)); });
 }
 
-void Rasterizer::UpdateViewportScissorState(float movie_x_offset) const {
+void Rasterizer::UpdateViewportScissorState(float movie_x_offset, float movie_scale) const {
     const auto& regs = Regs();
 
     const auto combined_scissor_value_tl = [](s16 scr, s16 win, s16 gen, s16 win_offset) {
@@ -3520,10 +3751,17 @@ void Rasterizer::UpdateViewportScissorState(float movie_x_offset) const {
 
             // ps4rt: sub-pixel jitter of scene geometry for the temporal upscaler; the same
             // shift as jittering the projection.
-            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0] + movie_x_offset;
+            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
             viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
             viewport.width = xscale * 2.0f * target_scale[0];
             viewport.height = yscale * 2.0f * target_scale[1];
+            const auto movie_viewport = ValkyriaMovie::Viewport(
+                {viewport.x, viewport.y, viewport.width, viewport.height},
+                movie_x_offset, movie_scale);
+            viewport.x = movie_viewport[0];
+            viewport.y = movie_viewport[1];
+            viewport.width = movie_viewport[2];
+            viewport.height = movie_viewport[3];
         }
 
         viewports.push_back(viewport);

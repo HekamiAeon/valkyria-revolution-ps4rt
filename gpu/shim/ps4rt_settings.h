@@ -20,11 +20,18 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 
-/// Live output resolutions: the upscaler's output and the UI host targets.
-inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
-inline constexpr int OutputCount = 4;
-inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
+/// FSR output resolutions (live): the upscaler's output and the HUD's host targets (the Sakura
+/// Wars / Code Fairy list). 0 is Native: FSR anti-aliasing at the internal resolution.
+inline constexpr int OutputWidths[] = {0, 1920, 2560, 3840, 3440, 3840, 5120};
+inline constexpr int OutputHeights[] = {0, 1080, 1440, 2160, 1440, 1440, 1440};
+inline constexpr int OutputCount = 7;
+inline constexpr int OutputNative = 0;
+inline constexpr int OutputDefault = OutputNative;
+
+/// An output can be chosen for an internal resolution when it is larger in both dimensions, at
+/// most 3x (FSR's range), and has the same aspect within 1% (2560x1080 -> 3440x1440 is the only
+/// inexact pair). Native always.
+bool OutputAllowed(int internal_width, int internal_height, int output);
 
 struct Values {
     bool valkyria = false; ///< Game profile, fixed before renderer/window threads start.
@@ -79,6 +86,16 @@ struct Values {
     /// rate patch does not apply to this game build.
     std::atomic<int> applied_engine_fps{120};
     bool startup_deferred_readback = true, startup_stale_readback = true;
+    /// The last render_resolution that reached the game (render_resolution_confirmed). A launch
+    /// with another one marks restart_unconfirmed first; when the next launch still finds the
+    /// mark, the previous one never reached the game and the confirmed resolution returns.
+    int confirmed_render_resolution = 0;
+    /// The native canvas this launch renders at (Valkyria startup patches): any internal
+    /// resolution other than the game's own 1920x1080, else 0.
+    /// Set by ps4rtgpu_init before the renderer threads start.
+    int canvas_width = 0, canvas_height = 0;
+    /// Why the selected canvas did not start (this launch runs at 1920 x 1080), or null.
+    const char* canvas_problem = nullptr;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
@@ -120,6 +137,18 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 /// A startup graphics option differs from the one this launch started with.
 bool GraphicsNeedRestart();
+/// The canvas started: the scene is width x height (the FSR output follows output_res).
+void ActivateCanvas(int width, int height);
+/// The selected canvas could not start (static text): this launch stays 1920 x 1080.
+void CanvasUnavailable(const char* problem);
+/// The scene size this launch renders at: the canvas, else 1920 x 1080.
+void SceneSize(int& width, int& height);
+/// The FSR output and host image for an OutputWidths index: the output fitted to the scene
+/// aspect (never stretched; 2560x1080 -> 3414x1440), or the scene size for Native or an output
+/// OutputAllowed rejects for this scene.
+void OutputSize(int output, int& width, int& height);
+/// After about ten seconds of game frames: this launch's render resolution is confirmed.
+void ConfirmRenderResolution();
 /// Writes the file (menu changes).
 void Save();
 

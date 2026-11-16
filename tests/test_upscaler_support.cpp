@@ -100,7 +100,7 @@ int main() {
     unsetenv("VALKYRIA_UPSCALER");
     unsetenv("VALKYRIA_OBJECT_MOTION");
     for (int provider : {UpscalerOff, UpscalerFsr3, UpscalerFsr4}) {
-        for (int output : {1, 2, 3}) {
+        for (int output : {0, 2, 3}) {
             s.valkyria = true;
             s.sharpen = true;
             s.sharpness = 0.42f;

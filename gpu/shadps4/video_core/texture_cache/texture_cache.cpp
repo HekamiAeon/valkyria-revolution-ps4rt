@@ -793,7 +793,8 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {cache_image_id, -1, -1};
         }
         if (image_info.BlockDim() != cache_image.info.BlockDim() ||
-            lhs_block_size != rhs_block_size) {
+            lhs_block_size != rhs_block_size ||
+            IsCompressedPoolReuse(image_info, cache_image.info)) {
             // Very likely this kind of overlap is caused by allocation from a pool.
             if (safe_to_delete) {
                 FreeImage(cache_image_id);
@@ -1052,7 +1053,8 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         return True(image.flags & ImageFlagBits::Registered) &&
                image.info.guest_address == info.guest_address &&
                image.info.guest_size == info.guest_size && image.info.size == info.size &&
-               image.info.pixel_format == info.pixel_format;
+               image.info.pixel_format == info.pixel_format &&
+               !IsCompressedPoolReuse(image.info, info);
     };
     if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
         cached.address == info.guest_address &&
@@ -1060,6 +1062,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         cached.format == info.pixel_format && cached.type == info.type &&
         cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
         cached.needs_native == desc.needs_native && cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
+        !IsCompressedPoolReuse(slot_images[cached.image_id].info, info) &&
         !Ps4RtToggle::Disabled(Ps4RtToggle::FindImageCache)) {
         Image& image = slot_images[cached.image_id];
         image.tick_accessed_last = scheduler.CurrentTick();
@@ -1089,6 +1092,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             continue;
         }
         if (cache_image.info.size != info.size) {
+            continue;
+        }
+        if (IsCompressedPoolReuse(cache_image.info, info)) {
             continue;
         }
         if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||

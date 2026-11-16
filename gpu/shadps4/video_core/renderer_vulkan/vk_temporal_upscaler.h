@@ -90,12 +90,18 @@ public:
 
     /// After identifying this draw's targets, before drawing any UI pixels. Menus use
     /// spatial background copy and native UI, without needing scene depth or FSR history.
+    /// `layer`: blended, or writing no RGB (an alpha/depth/stencil mask for the UI after it).
     void OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::ImageId depth,
-                bool native_viewport, bool blended=false, u64 ps_hash=0);
+                bool native_viewport, bool layer=false, u64 ps_hash=0);
 
     /// A pass's first color target: the last render-size RGBA8 target before the UI is the
     /// game's finished frame.
     void OnColorTarget(VideoCore::ImageId color);
+    /// Valkyria: an unblended draw into `color` sampling `source` (texture slot 0) first. The
+    /// copy into the finished frame tells whether this frame's scene reaches the upscaler.
+    void OnFrameCopy(u64 vs_hash, u64 ps_hash, VideoCore::ImageId color, VAddr source);
+    /// Valkyria: the scene composite draws the frame as a pencil sketch on paper (smokescreen).
+    void OnSketch(bool active) { sketch_frame = active; }
 
     struct Target {
         vk::ImageView view;
@@ -153,12 +159,9 @@ private:
     /// Render size below the scaled-preset output size (the resolution patch is on).
     [[nodiscard]] bool Scaled() const;
     /// A target of the patched render size: the game allocates it with aligned dimensions
-    /// (a 1916x1078 scene in 1916x1080 targets).
-    [[nodiscard]] bool RenderTarget(u32 w, u32 h) const {
-        if (!scaled_session) return w == 1920 && h == 1080;
-        return w >= render_width && h >= render_height && w < render_width + 8 &&
-               h < render_height + 8;
-    }
+    /// (a 1916x1078 scene in 1916x1080 targets). Otherwise the scene size of this launch (the
+    /// internal resolution, 1920x1080 by default).
+    [[nodiscard]] bool RenderTarget(u32 w, u32 h) const;
     /// The scene's size inside a `w` x `h` render target: the game's viewport.
     [[nodiscard]] std::array<u32, 2> SceneSize(u32 w, u32 h) const;
     // The scene color is drawn into a reduced SceneTargets proxy (live presets).
@@ -180,7 +183,7 @@ private:
                     bool hdr);
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
-                    u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
+                    u32 w, u32 h, u32 ow, u32 oh, float frame_ms, bool hdr);
     void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
     /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
     /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
@@ -210,6 +213,14 @@ private:
     bool mask_ready = false;
     std::array<float, 2> jitter{};
     u32 jitter_index = 0;
+    // Valkyria: targets drawn after this frame's G-buffer, whether the finished frame was copied
+    // from one of them, and (latched for the next frame) a scene that never reached it.
+    std::vector<VAddr> scene_writes;
+    VideoCore::ImageId last_scene_write{};
+    bool frame_from_scene = true;
+    bool scene_offscreen = false;
+    bool sketch_frame = false; ///< this frame is the pencil sketch
+    bool sketch = false;       ///< the previous frame was: no jitter, FSR 4 history dropped
     bool reset = true;
     u64 frame_id = 0;
     std::chrono::steady_clock::time_point last_frame{};

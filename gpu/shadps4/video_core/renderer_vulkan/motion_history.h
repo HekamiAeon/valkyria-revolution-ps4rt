@@ -51,6 +51,23 @@ inline BufferRole ClassifyBuffer(uint32_t size) {
     return size >= 96 && size % 48 == 0 ? BufferRole::SmallSkeleton : BufferRole::Other;
 }
 
+// Valkyria passes whose geometry gets object motion, by bound colour targets: the G-buffer
+// (three), and opaque geometry the game draws forward after lighting into the lit scene and
+// normals, writing the scene depth (two: the history book's cover and pages, the world
+// map's terrain). A blended draw there must keep the motion of the surface behind it.
+constexpr bool ValkyriaMotionTargets(uint32_t bound, bool depth_write, bool blended) {
+    return bound == 3 || (bound == 2 && depth_write && !blended);
+}
+
+// Valkyria's camera motion and FSR read the scene depth as its geometry left it, copied
+// before the HUD clears it, or earlier when a full-screen pass (one target, one quad) writes
+// it: cutscene depth of field blends its quad over the background with depth writes on, and
+// the background then had the quad's depth (wrong motion in dolly shots: a radial smear).
+constexpr bool ValkyriaScreenPassWritesDepth(uint32_t bound, uint32_t indices, uint32_t instances,
+                                             bool depth_write) {
+    return depth_write && bound == 1 && indices <= 6 && instances <= 1;
+}
+
 // Scanning and hashing the index list of every stored draw each frame took ~10% of the GPU
 // thread. Static meshes keep their index buffers, so a result is reused and fully verified
 // again every `Revalidate` frames. A stale result only costs camera-quality vectors: the

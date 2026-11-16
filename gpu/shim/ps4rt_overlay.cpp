@@ -208,6 +208,34 @@ void Choice(const char* label, std::atomic<int>& target, const char* const* labe
     }
 }
 
+// Internal resolution: one list grouped under aspect headings (16:9, 21:9, 24:9, 32:9), as in
+// the Sakura Wars and Code Fairy ports.
+void ResolutionChoice(const char* label, std::atomic<int>& target) {
+    namespace G = Ps4RtGraphics;
+    const int value = target.load();
+    const int current = G::IndexOf(G::ResolutionMenuOrder, value, 0);
+    if (!ImGui::BeginCombo(label, G::ResolutionMenuLabels[current], ImGuiComboFlags_HeightLarge))
+        return;
+    for (const auto& group : G::ResolutionMenuGroups) {
+        // Headings are decorative: keyboard and controller navigation visits only resolutions.
+        ImGui::SeparatorText(group.label);
+        for (int i = group.first; i < group.first + group.count; ++i) {
+            const bool selected = G::ResolutionMenuOrder[i] == value;
+            if (ImGui::Selectable(G::ResolutionMenuLabels[i], selected))
+                Store(target, G::ResolutionMenuOrder[i], true);
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+    }
+    ImGui::EndCombo();
+}
+
+static const char* const kInternalResolutionHelp =
+    "The resolution the game renders at. Restart required. Resolutions other than 1920 x 1080 are "
+    "experimental; ultrawide keeps the HUD in a centred 16:9 area. Occasional flicker or "
+    "misplaced UI elements may occur, so switch back to 1920 x 1080 if a scene misbehaves. "
+    "Videos and 2D screens stay 16:9. If a launch at a new resolution never reaches the game, "
+    "the next launch returns to the last one that did.";
+
 // Controller button names in the help text follow PS4RT_GLYPHS (run.py sets xbox or nintendo when
 // the glyph feature is on); unset is PlayStation. Read once: the environment is fixed for a run.
 static const char* PadText(const char* playstation, const char* xbox, const char* nintendo) {
@@ -315,21 +343,48 @@ void GameTab() {
 }
 
 void ValkyriaGraphics() {
+    namespace G = Ps4RtGraphics;
     auto& s = Ps4RtSettings::Get();
+    int scene_width, scene_height;
+    Ps4RtSettings::SceneSize(scene_width, scene_height);
+    char scene_text[48];
+    std::snprintf(scene_text, sizeof(scene_text), "%d x %d", scene_width, scene_height);
     if (BeginRows("##valkyria_image")) {
-        ChoiceRow("Display mode", s.display_mode, Ps4RtGraphics::DisplayModeNames.data(),
-                  nullptr, Ps4RtGraphics::DisplayModeCount,
-                  "Windowed, borderless window, or exclusive fullscreen. Applies immediately.");
-        static const char* const outputs[] = {"1920 x 1080", "2560 x 1440", "3840 x 2160 (4K)"};
-        static constexpr int output_values[] = {1, 2, 3};
-        Row("Output resolution");
+        Row("Internal resolution");
         if (focus_graphics) {
             ImGui::SetKeyboardFocusHere();
             focus_graphics = false;
         }
-        Choice("##value",s.output_res,outputs,output_values,3);
-        Help("Fixed 16:9 output fitted to the window. The game still renders internally at 1080p.");
+        ResolutionChoice("##value", s.render_resolution);
+        Help(kInternalResolutionHelp);
         ImGui::PopID();
+        // The resolution this launch renders at (a new choice applies on restart).
+        InfoRow("Current Applied Resolution:", scene_text);
+        {
+            // Outputs for the selected internal resolution (same aspect, larger, up to 3x);
+            // Native first.
+            const int r = std::clamp(s.render_resolution.load(), 0, int(G::Resolutions.size()) - 1);
+            const int iw = G::ResolutionWidths[r], ih = G::ResolutionHeights[r];
+            if (!Ps4RtSettings::OutputAllowed(iw, ih, s.output_res)) Store(s.output_res, Ps4RtSettings::OutputNative, true);
+            static const char* const output_labels[] = {"Native (AA only)", "1920 x 1080", "2560 x 1440",
+                "3840 x 2160 (4K)", "3440 x 1440", "3840 x 1440", "5120 x 1440"};
+            const char* labels[Ps4RtSettings::OutputCount];
+            int values[Ps4RtSettings::OutputCount];
+            int count = 0;
+            for (int o = 0; o < Ps4RtSettings::OutputCount; ++o) {
+                if (!Ps4RtSettings::OutputAllowed(iw, ih, o)) continue;
+                labels[count] = output_labels[o];
+                values[count++] = o;
+            }
+            ChoiceRow("FSR Upscale output", s.output_res, labels, values, count,
+                      "This setting has no effect unless FSR is enabled. Only resolutions larger than "
+                      "the Internal resolution, at its aspect and up to 3x (FSR's range), are offered; "
+                      "Native enables FSR anti-aliasing without upscaling. Applies live.");
+        }
+        ChoiceRow("Display mode", s.display_mode, Ps4RtGraphics::DisplayModeNames.data(),
+                  nullptr, Ps4RtGraphics::DisplayModeCount,
+                  "Windowed, borderless window, or exclusive fullscreen. Applies immediately.");
+        CheckRow("FPS counter", s.show_fps, "Shows the frame rate in a corner of the screen. Applies live.");
         static const char* const providers[] = {"Off / Original", "FSR 3.1", "FSR 4 v07"};
         static constexpr int provider_values[] = {Ps4RtSettings::UpscalerOff,
             Ps4RtSettings::UpscalerFsr3, Ps4RtSettings::UpscalerFsr4};
@@ -337,14 +392,29 @@ void ValkyriaGraphics() {
         std::atomic<int> provider{s.upscaler.load()};
         ChoiceRow("Upscaling / anti-aliasing", provider, providers, provider_values,
                   s.fsr4_supported ? 3 : 2,
-                  "FSR reconstructs the 1080p scene before the HUD. Off uses the original image with ordinary display scaling.");
+                  "FSR reconstructs the scene before the HUD. FSR 3.1 and 4 rebuild the image over "
+                  "several frames (smoother edges, heavier). Off uses the original image with "
+                  "ordinary display scaling. Applies live.");
         if (provider != s.upscaler)
             Ps4RtSettings::SetValkyriaUpscaler(provider);
+        {
+            // The FSR mode of this launch: the output's scale over the internal resolution.
+            int output_width, output_height;
+            Ps4RtSettings::OutputSize(s.output_res, output_width, output_height);
+            const float ratio = float(output_height) / float(scene_height);
+            const char* mode = ratio < 1.01f ? "Native AA" : std::abs(ratio - 1.5f) < 0.01f ? "Quality"
+                : std::abs(ratio - 2.f) < 0.01f ? "Performance" : std::abs(ratio - 3.f) < 0.01f ? "Ultra Performance"
+                : nullptr;
+            char text[96];
+            if (s.upscaler == Ps4RtSettings::UpscalerOff)
+                std::snprintf(text, sizeof(text), "Original (%s input)", scene_text);
+            else if (mode)
+                std::snprintf(text, sizeof(text), "%s (%s input)", mode, scene_text);
+            else
+                std::snprintf(text, sizeof(text), "Custom %.2fx (%s input)", ratio, scene_text);
+            InfoRow("Quality preset", text);
+        }
         const bool temporal = s.upscaler != Ps4RtSettings::UpscalerOff;
-        const int output = s.output_res;
-        InfoRow("Quality preset", !temporal ? "Original (1080p input)" :
-            output == 1 ? "Native AA (1080p input)" :
-            output == 3 ? "Performance (1080p input)" : "Custom 1.33x (1080p input)");
         static const char* const anisotropy_labels[] = {"Game default", "2x", "4x", "8x", "16x"};
         ChoiceRow("Anisotropic filtering", s.anisotropy, anisotropy_labels,
                   Ps4RtGraphics::Anisotropies.data(), int(Ps4RtGraphics::Anisotropies.size()),
@@ -363,12 +433,15 @@ void ValkyriaGraphics() {
         ImGui::EndTable();
     }
     {
-        ImGui::TextDisabled("Display mode, resolution, FSR and sharpening apply live. Choices save on close.");
+        if (s.render_resolution != s.startup_render_resolution)
+            ImGui::TextWrapped("Restart the game (Restart Game below) to apply the selected internal resolution.");
+        if (const char* problem = s.canvas_problem)
+            ImGui::TextWrapped("The selected internal resolution could not start this launch (%s); running at 1920 x 1080.", problem);
+        ImGui::TextDisabled("Display mode, FPS counter, FSR upscale output, FSR and sharpening apply live. Choices save on close.");
         if (s.anisotropy != s.startup_anisotropy)
             ImGui::TextWrapped("Restart the game to apply the selected anisotropic filtering.");
         else
             ImGui::TextDisabled("Anisotropic filtering changes require a game restart.");
-        ImGui::TextDisabled("Render scale follows the fixed 1080p game input.");
         if (!s.fsr4_supported) ImGui::TextWrapped("FSR 4 v07 requires GPU features unavailable on this device. FSR 3.1 remains available.");
         if (const char* problem = s.fsr4_problem.load()) ImGui::TextWrapped("%s", problem);
     }
@@ -449,9 +522,10 @@ void PerformanceTab() {
     if (s.valkyria) return; // Ps4Rt engine/resolution patches do not apply to Valkyria.
     ImGui::SeparatorText("Applied on restart");
     if (BeginRows("##restart")) {
-        static const char* const resolution_labels[] = {"Native (1080p)", "480p", "720p", "1440p", "1800p", "4K"};
-        ChoiceRow("Render resolution", s.render_resolution, resolution_labels, nullptr, int(G::Resolutions.size()),
-                  "The resolution the game draws at. Higher is sharper and slower.");
+        Row("Internal resolution");
+        ResolutionChoice("##value", s.render_resolution);
+        Help(kInternalResolutionHelp);
+        ImGui::PopID();
         static const char* const engine_labels[] = {"60 (original)", "120", "240"};
         ChoiceRow("Engine frame rate", s.engine_fps, engine_labels, G::EngineFps.data(), int(G::EngineFps.size()),
                   "The highest frame rate the game itself runs at.");
@@ -1357,8 +1431,7 @@ void ConfirmRestart() {
     if (!s.restart_unconfirmed || loading || ++frames < 600) {
         return;
     }
-    s.restart_unconfirmed = false;
-    Ps4RtSettings::Save();
+    Ps4RtSettings::ConfirmRenderResolution();
     std::puts("Settings: graphics options confirmed after restart");
 }
 

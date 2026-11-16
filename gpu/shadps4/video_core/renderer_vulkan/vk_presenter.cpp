@@ -1063,9 +1063,11 @@ Frame* Presenter::GetRenderFrame() {
 void Presenter::SetExpectedGameSize(s32 width, s32 height) {
     const auto& graphics = Ps4RtSettings::Get();
     if (graphics.valkyria) {
-        const int output = std::clamp(graphics.output_res.load(),0,Ps4RtSettings::OutputCount-1);
-        expected_frame_width = Ps4RtSettings::OutputWidths[output];
-        expected_frame_height = Ps4RtSettings::OutputHeights[output];
+        // The fixed host image: the menu's 16:9 output, or the native wide canvas.
+        int output_width, output_height;
+        Ps4RtSettings::OutputSize(graphics.output_res.load(), output_width, output_height);
+        expected_frame_width = output_width;
+        expected_frame_height = output_height;
         return;
     }
     if (width <= 0 || height <= 0) {

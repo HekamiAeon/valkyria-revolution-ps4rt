@@ -2,7 +2,9 @@
 // ps4rt: glue between the C loader and the vendored shadPS4 video core.
 #include "ps4rt_overlay.h"
 #include "ps4rt_png.h"
+#include "ps4rt_graphics.h"
 #include "ps4rt_settings.h"
+#include "valkyria_wide_patches.h"
 #include "ps4rt_copy.h"
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -228,6 +230,21 @@ extern "C" int ps4rtgpu_init(const Ps4RtGpuConfig* config) {
         settings.deferred_readback=settings.startup_deferred_readback=false;
         settings.stale_readback=settings.startup_stale_readback=false;
         std::puts("Valkyria: live graphics menu available (Insert / R3+L2), no frame-rate patches");
+        // Another internal resolution patches the game before the loader protects its code;
+        // anything unexpected leaves this launch at 1920 x 1080.
+        const int resolution = settings.startup_render_resolution;
+        if (resolution > 0 && resolution < int(Ps4RtGraphics::Resolutions.size())) {
+            const int width = Ps4RtGraphics::ResolutionWidths[resolution];
+            const int height = Ps4RtGraphics::ResolutionHeights[resolution];
+            static std::string problem;
+            if (ValkyriaWidePatches::Start(ValkyriaWidePatches::GuestBase, width, height, &problem)) {
+                Ps4RtSettings::ActivateCanvas(width, height);
+            } else {
+                std::printf("Valkyria internal resolution: %dx%d unavailable (%s); running at 1920x1080\n",
+                            width, height, problem.c_str());
+                Ps4RtSettings::CanvasUnavailable(problem.c_str());
+            }
+        }
     }
 #ifdef PS4RT_PGO_GENERATE
     StartProfileWriter();

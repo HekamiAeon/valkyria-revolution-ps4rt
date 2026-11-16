@@ -60,6 +60,48 @@ int main() {
         dst.resources.levels = 2;
         assert(!GetAliasCopyExtent(src, dst));
     }
+    // Compressed textures from the game's pool: another size or tiling at a reused address is
+    // a new texture (Valkyria street curbs sampled a view of a larger cached texture).
+    {
+        const auto bc = [](u32 width, u32 height, vk::Format format) {
+            ImageInfo info = Make({width, height, 1}, format);
+            info.num_bits = format == vk::Format::eBc1RgbaUnormBlock ? 64 : 128;
+            info.props.is_block = true;
+            info.props.is_tiled = true;
+            info.tile_mode = AmdGpu::TileMode::Thin1DThin;
+            info.array_mode = AmdGpu::ArrayMode::Array1DTiledThin1;
+            return info;
+        };
+        const auto bc1 = vk::Format::eBc1RgbaUnormBlock, bc3 = vk::Format::eBc3UnormBlock;
+        const ImageInfo cached = bc(1024, 1024, bc1);
+        assert(IsCompressedPoolReuse(bc(512, 512, bc1), cached));
+        assert(IsCompressedPoolReuse(cached, bc(512, 512, bc1)));
+        assert(IsCompressedPoolReuse(bc(1024, 512, bc1), cached));
+        assert(IsCompressedPoolReuse(bc(256, 1024, bc1), cached));
+        ImageInfo retiled = bc(1024, 1024, bc1);
+        retiled.tile_mode = AmdGpu::TileMode::Display2DThin;
+        assert(IsCompressedPoolReuse(retiled, cached));
+        retiled = bc(1024, 1024, bc1);
+        retiled.array_mode = AmdGpu::ArrayMode::ArrayLinearAligned;
+        assert(IsCompressedPoolReuse(retiled, cached));
+        retiled = bc(1024, 1024, bc1);
+        retiled.props.is_tiled = false;
+        assert(IsCompressedPoolReuse(retiled, cached));
+        // The same texture with fewer mips or layers stays a view.
+        ImageInfo fewer_mips = bc(1024, 1024, bc1);
+        ImageInfo full_chain = bc(1024, 1024, bc1);
+        full_chain.resources.levels = 11;
+        assert(!IsCompressedPoolReuse(fewer_mips, full_chain));
+        fewer_mips.resources.layers = 1;
+        full_chain.resources.layers = 6;
+        assert(!IsCompressedPoolReuse(fewer_mips, full_chain));
+        // Other formats keep the existing reinterpretation rules, uncompressed images too.
+        assert(!IsCompressedPoolReuse(bc(512, 512, bc3), cached));
+        assert(!IsCompressedPoolReuse(Make({1920, 1080, 1}), Make({5120, 1440, 1})));
+        ImageInfo uncompressed = Make({1920, 1080, 1});
+        uncompressed.props.is_tiled = true;
+        assert(!IsCompressedPoolReuse(uncompressed, Make({1920, 1088, 1})));
+    }
     std::puts("aliasing-test: OK");
     return 0;
 }
