@@ -1145,6 +1145,17 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                                   ps->pgm_hash, cb_descs[0].first,
                                   ps->images[0].GetSharp(*ps).Address());
         }
+        // Valkyria: the scene's last pass. A talk portrait's ends in a texture of its own.
+        if (Ps4RtSettings::Get().valkyria && ps && ps->pgm_hash == 0xd444ce6f &&
+            cb_descs[0].first) {
+            const auto& size = texture_cache.GetImage(cb_descs[0].first).info.size;
+            const float vw = std::abs(viewport.xscale * 2), vh = std::abs(viewport.yscale * 2);
+            upscaler->OnSceneFinal(cb_descs[0].first,
+                                   std::abs(viewport.xoffset - vw / 2) < 0.5f &&
+                                       std::abs(viewport.yoffset - vh / 2) < 0.5f &&
+                                       std::abs(vw - float(size.width)) < 0.5f &&
+                                       std::abs(vh - float(size.height)) < 0.5f);
+        }
         // Valkyria: the scene composite's pencil-sketch weights (the smokescreen's paper look).
         if (Ps4RtSettings::Get().valkyria && ps && ps->pgm_hash == 0xbea77ad8) {
             for (const auto& resource : ps->buffers) {
@@ -2558,6 +2569,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 if (desc.is_written) {
                     // Raw storage-buffer writes can also make an aliased cached image stale.
                     texture_cache.InvalidateMemoryFromGPU(vsharp.base_address, size);
+                    if (upscaler->HasLayers()) {
+                        JoinBindHelper(this); // it reads the layers
+                        upscaler->OnGuestWrite(vsharp.base_address, size);
+                    }
                 }
                 needs_barrier |= runtime.IsBufferAccessed(buffer, offset, size, desc.is_written);
             }
@@ -3546,6 +3561,9 @@ void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, b
         }
     }
     texture_cache.InvalidateMemoryFromGPU(dst, num_bytes);
+    if (upscaler->HasLayers()) {
+        upscaler->OnGuestWrite(dst, num_bytes);
+    }
     const auto* gds_buffer = buffer_cache.GetGdsBuffer();
     const auto [src_buffer, src_offset] = [&] -> std::pair<const VideoCore::Buffer*, u64> {
         if (src_gds) {

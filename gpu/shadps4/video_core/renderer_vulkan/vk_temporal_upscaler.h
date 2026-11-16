@@ -102,6 +102,13 @@ public:
     void OnFrameCopy(u64 vs_hash, u64 ps_hash, VideoCore::ImageId color, VAddr source);
     /// Valkyria: the scene composite draws the frame as a pencil sketch on paper (smokescreen).
     void OnSketch(bool active) { sketch_frame = active; }
+    /// Valkyria: the scene's last pass (its edge smoothing) draws `color`, filling it when
+    /// `whole`. In a frame whose scene never reaches the upscaler that is a texture of its
+    /// own, shown later as a 2D layer (a talk portrait): see scene_layer.h.
+    void OnSceneFinal(VideoCore::ImageId color, bool whole);
+    /// The game wrote guest memory itself (a compute clear): a layer's copy is no longer it.
+    void OnGuestWrite(VAddr address, u64 size);
+    [[nodiscard]] bool HasLayers() const noexcept { return !layers.empty(); }
 
     struct Target {
         vk::ImageView view;
@@ -117,12 +124,14 @@ public:
     /// A pass fell back to guest attachments; never present its unwritten host color.
     void CancelDisplay(VideoCore::ImageId color);
     bool RedirectDepth(VideoCore::ImageId depth, Target& target, bool display_pass);
-    /// A sampled image replaced by the upscaled frame (the display pass).
+    /// A sampled image replaced by the upscaled frame (the display pass), or by the
+    /// output-size copy of a scene shown as a layer.
     bool RedirectSampled(VideoCore::ImageId image, const VideoCore::ImageViewInfo& info,
                          vk::ImageView& view, vk::ImageLayout& layout);
     /// Whether RedirectSampled would replace `image` (it may record a barrier then).
     [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const {
-        return display_redirect && image == ui_color;
+        return (display_redirect && image == ui_color) ||
+               (!layers.empty() && ShownLayer(image) >= 0);
     }
 
     /// Presenter: the output-size display buffer standing in for the guest one at `address`.
@@ -259,6 +268,40 @@ private:
     };
     vk::ImageView Mirror(vk::Image image, std::vector<MirrorView>& views, vk::Format format,
                          vk::ComponentMapping mapping);
+    // Valkyria: a scene shown as a 2D layer, gathered into an output-size copy (scene_layer.h).
+    struct Layer {
+        VAddr address{};
+        u32 width{}, height{}, out_width{}, out_height{};
+        std::array<VideoCore::UniqueImage, 2> copies, seen; ///< read and written in turn
+        std::array<vk::UniqueImageView, 2> copy_views, seen_views;
+        std::array<std::vector<MirrorView>, 2> mirrors; ///< the copies as the game samples them
+        vk::UniqueImageView source; ///< the game's texture
+        vk::Image source_image{};
+        u64 source_uid{};
+        u32 current{};                 ///< the copy written last
+        u32 age{};                     ///< frames gathered since the copy began
+        u64 frame{};                   ///< the last one
+        std::array<float, 2> jitter{}; ///< that frame's
+        bool laid_out{};
+        bool stale{}; ///< the game wrote the texture since
+    };
+    std::vector<Layer> layers;
+    VideoCore::ImageId scene_final{}; ///< what this frame's scene ended in, and how many did
+    u32 scene_finals{};
+    bool scene_final_whole = false;
+    bool layer_gathered = false; ///< this frame's scene was a layer and was gathered
+    bool layer_jitter = false;   ///< so was the previous frame's: this one keeps its jitter
+    u64 layer_frame{};
+    Layer* PrepareLayer(u32 w, u32 h, u32 ow, u32 oh);
+    void GatherLayer(vk::CommandBuffer cmdbuf, Layer& layer, vk::ImageView depth);
+    /// The layer whose copy stands for `image` in this frame's UI, or -1.
+    [[nodiscard]] int ShownLayer(VideoCore::ImageId image) const;
+    void DropLayers();
+    /// The jitter the upscaled frame was drawn with: none when the game restored it from a
+    /// picture (the scene drawn with this frame's jitter is the layer).
+    [[nodiscard]] std::array<float, 2> FrameJitter() const noexcept {
+        return frame_from_scene ? jitter : std::array<float, 2>{};
+    }
     std::vector<MirrorView> ui_views;
     struct DisplayImage {
         VideoCore::UniqueImage image;
@@ -297,6 +340,9 @@ private:
     vk::UniqueDescriptorSetLayout taa_desc_layout;
     vk::UniquePipelineLayout taa_pipeline_layout;
     vk::UniquePipeline taa_pipeline;
+    vk::UniqueDescriptorSetLayout layer_desc_layout;
+    vk::UniquePipelineLayout layer_pipeline_layout;
+    vk::UniquePipeline layer_pipeline;
     vk::UniqueDescriptorSetLayout taa_sharpen_desc_layout;
     vk::UniquePipelineLayout taa_sharpen_pipeline_layout;
     vk::UniquePipeline taa_sharpen_pipeline;

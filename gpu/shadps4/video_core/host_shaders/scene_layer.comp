@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// A scene the game draws into a texture of its own and then shows as a 2D layer (Valkyria's
+// talk portrait) never reaches the frame's upscaler: at a low internal resolution it is that
+// resolution, stretched. Its jittered frames are gathered here into an output-size copy the
+// layer is shown from. Each frame's texels are exact where the jitter put them: an output
+// pixel takes the nearest one by how close it was drawn to the pixel's centre, so over the
+// jitter sequence every output pixel is built from the samples that fell on it. Where the
+// layer changed with no motion to follow (a blink, a pose that jumped) the copy starts again
+// from the frame. All four channels: the layer is transparent around its subject.
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D layer_tex;   // as the game drew it, render size
+layout(binding = 1) uniform sampler2D depth_tex;   // its scene's depth and motion (pixels to
+layout(binding = 2) uniform sampler2D motion_tex;  // the previous frame), texel for texel
+layout(binding = 3) uniform sampler2D history_tex; // output size
+layout(binding = 4) uniform sampler2D seen_tex;    // render size: the previous frame, blurred
+layout(binding = 5, rgba16f) uniform writeonly image2D result_img;
+layout(binding = 6, rgba16f) uniform writeonly image2D seen_img;
+layout(push_constant) uniform Params {
+    vec2 jitter;          // the viewport offset the layer was drawn with, render pixels
+    vec2 previous_jitter; // the previous frame's
+    float newest;         // weight of a texel drawn exactly at an output pixel's centre
+    uint reset_history;   // the copy holds nothing of this layer
+};
+
+// The layer around a point, blurred by a texel (five taps a side around each texel, read
+// between the four texels around the point: one sum over their 6x6). What the texels there
+// show, whichever way the jitter laid them over it.
+const float BLUR[3] = float[3](1.0, 0.60653066, 0.13533528);
+const float BLUR_SUM = 2.48373188;
+vec4 blurred(vec2 position) {
+    ivec2 base = ivec2(floor(position));
+    vec2 f = position - vec2(base);
+    ivec2 bound = textureSize(layer_tex, 0) - 1;
+    vec2 w[6];
+    for (int i = 0; i < 6; ++i) {
+        w[i] = ((1.0 - f) * (i < 5 ? BLUR[abs(i - 2)] : 0.0) +
+                f * (i > 0 ? BLUR[abs(i - 3)] : 0.0)) / BLUR_SUM;
+    }
+    vec4 sum = vec4(0.0);
+    for (int y = 0; y < 6; ++y)
+        for (int x = 0; x < 6; ++x)
+            sum += texelFetch(layer_tex, clamp(base + ivec2(x - 2, y - 2), ivec2(0), bound), 0) *
+                   (w[x].x * w[y].y);
+    return sum;
+}
+
+vec4 fetchLinear(sampler2D tex, vec2 position) {
+    ivec2 p = ivec2(floor(position));
+    vec2 f = fract(position);
+    ivec2 bound = textureSize(tex, 0) - 1;
+    return mix(mix(texelFetch(tex, clamp(p, ivec2(0), bound), 0),
+                   texelFetch(tex, clamp(p + ivec2(1, 0), ivec2(0), bound), 0), f.x),
+               mix(texelFetch(tex, clamp(p + ivec2(0, 1), ivec2(0), bound), 0),
+                   texelFetch(tex, clamp(p + ivec2(1, 1), ivec2(0), bound), 0), f.x), f.y);
+}
+
+// Catmull-Rom: the copy is read between its pixels every frame the subject moves, and
+// linear reads blur a little more each time.
+vec4 fetchCubic(sampler2D tex, vec2 position) {
+    ivec2 p = ivec2(floor(position));
+    vec2 f = fract(position);
+    ivec2 bound = textureSize(tex, 0) - 1;
+    vec2 w[4] = vec2[4](f * (-0.5 + f * (1.0 - 0.5 * f)), 1.0 + f * f * (-2.5 + 1.5 * f),
+                        f * (0.5 + f * (2.0 - 1.5 * f)), f * f * (-0.5 + 0.5 * f));
+    vec4 sum = vec4(0.0);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+            sum += texelFetch(tex, clamp(p + ivec2(x - 1, y - 1), ivec2(0), bound), 0) *
+                   (w[x].x * w[y].y);
+    return sum;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 out_size = imageSize(result_img);
+    if (any(greaterThanEqual(p, out_size))) return;
+    ivec2 size = textureSize(layer_tex, 0);
+    if (all(lessThan(p, size))) {
+        imageStore(seen_img, p, blurred(vec2(p)));
+    }
+    vec2 ratio = vec2(size) / vec2(out_size);
+    // Where this frame drew the output pixel's centre, in texel-centre coordinates.
+    vec2 position = (vec2(p) + 0.5) * ratio - 0.5 + jitter;
+    ivec2 nearest = clamp(ivec2(floor(position + 0.5)), ivec2(0), size - 1);
+    // The nearest surface around the pixel moves it, as in temporal upscalers: next to a
+    // moving subject the background's own motion would keep the subject's old edge.
+    vec4 lo = vec4(1e9), hi = vec4(-1e9);
+    ivec2 mover = nearest;
+    float depth = 2.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = clamp(nearest + ivec2(x, y), ivec2(0), size - 1);
+            vec4 c = texelFetch(layer_tex, q, 0);
+            lo = min(lo, c);
+            hi = max(hi, c);
+            float d = texelFetch(depth_tex, q, 0).r;
+            if (d < depth) {
+                depth = d;
+                mover = q;
+            }
+        }
+    // Without usable history: this frame alone, put back where it belongs.
+    vec4 result = fetchLinear(layer_tex, position);
+    if (reset_history == 0u) {
+        vec2 motion = texelFetch(motion_tex, mover, 0).rg;
+        if (any(isnan(motion)) || any(isinf(motion))) motion = vec2(0.0);
+        vec2 previous = vec2(p) + motion / ratio;
+        if (all(greaterThanEqual(previous, vec2(0.0))) &&
+            all(lessThanEqual(previous, vec2(out_size - 1)))) {
+            vec4 history = fetchCubic(history_tex, previous);
+            if (!any(isnan(history)) && !any(isinf(history))) {
+                // What moved or changed is bounded by what this frame shows around the pixel.
+                history = clamp(history, lo, hi);
+                vec2 offset = (vec2(nearest) - position) / ratio; // output pixels
+                float weight = clamp(newest * exp(-2.29 * dot(offset, offset)), 0.0, 1.0);
+                // Not where its texels hold dark and bright alike (an iris, an outline against
+                // nothing): there a change with no motion to follow, a blink or a pose that
+                // jumped, would stay in the copy. Blurred, the layer is the same from frame to
+                // frame but for where the jitter put its texels: an edge falls between two
+                // texels in each, so up to a texel apart. What the previous frame did not show
+                // within a texel is new, and starts from this frame.
+                vec2 before = (previous + 0.5) * ratio - 0.5 + previous_jitter;
+                ivec2 was = ivec2(floor(before));
+                vec4 seen_lo = vec4(1e9), seen_hi = vec4(-1e9);
+                for (int y = -1; y <= 2; ++y)
+                    for (int x = -1; x <= 2; ++x) {
+                        vec4 seen = texelFetch(seen_tex,
+                                               clamp(was + ivec2(x, y), ivec2(0), size - 1), 0);
+                        seen_lo = min(seen_lo, seen);
+                        seen_hi = max(seen_hi, seen);
+                    }
+                vec4 now = blurred(position);
+                vec4 beyond = max(max(seen_lo - now, now - seen_hi), vec4(0.0));
+                float changed = smoothstep(
+                    0.02, 0.08, max(max(beyond.r, beyond.g), max(beyond.b, beyond.a)));
+                result = mix(mix(history, texelFetch(layer_tex, nearest, 0), weight), result,
+                             changed);
+            }
+        }
+    }
+    imageStore(result_img, p, result);
+}

@@ -20,6 +20,8 @@
 #include "video_core/host_shaders/upscale_merge_comp.h"
 #include "video_core/host_shaders/upscale_reactive_comp.h"
 #include "video_core/host_shaders/taa_comp.h"
+#include "video_core/host_shaders/scene_layer_comp.h"
+#include "video_core/renderer_vulkan/scene_layer.h"
 #include "video_core/host_shaders/taa_sharpen_comp.h"
 #include "video_core/host_shaders/taa_sharpen_ldr_comp.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -378,11 +380,21 @@ bool TemporalUpscaler::OnFrameStart() {
     // over a background restored from a cache: the upscaler never sees that scene, and its
     // jitter would shake the portrait. Decided from the previous frame (portraits persist).
     const bool offscreen = settings.valkyria && !frame_from_scene;
-    if (offscreen != scene_offscreen) {
-        std::printf("Valkyria: scene %s the upscaled frame, jitter %s\n",
-                    offscreen ? "outside" : "back in", offscreen ? "paused" : "resumed");
+    // Unless that scene was gathered as a layer, which takes the jitter out again.
+    const bool gathered = offscreen && SceneLayer::KeepsJitter(scene_finals, layer_gathered);
+    if (offscreen != scene_offscreen || gathered != layer_jitter) {
+        std::printf("Valkyria: scene %s the upscaled frame, %s\n",
+                    offscreen ? "outside" : "back in",
+                    !offscreen ? "jitter resumed"
+                               : gathered ? "gathered as a layer" : "jitter paused");
     }
     scene_offscreen = offscreen;
+    layer_jitter = gathered;
+    if (!offscreen) DropLayers();
+    ++layer_frame;
+    layer_gathered = false;
+    scene_final = {};
+    scene_finals = 0;
     frame_from_scene = true;
     frame_target = {};
     // The pencil sketch leaves only thin outlines on flat paper. FSR 4 keeps moved outlines in
@@ -396,7 +408,7 @@ bool TemporalUpscaler::OnFrameStart() {
     scene_writes.clear();
     last_scene_write = {};
     // Halton(2, 3); the menu or toggle 1 << 25 disables it.
-    if (!jitter_on || scene_offscreen || (sketch && UseFsr4())) {
+    if (!jitter_on || (scene_offscreen && !layer_jitter) || (sketch && UseFsr4())) {
         jitter = {};
         return changed;
     }
@@ -682,6 +694,231 @@ void TemporalUpscaler::CreatePipelines() {
             .addressModeW = vk::SamplerAddressMode::eClampToEdge}));
         taa_pipeline = compute(TAA_COMP, *taa_pipeline_layout);
     }
+    {
+        // Scene layer: its texture, depth, motion, copy and the previous frame (blurred) read;
+        // the copy and this frame written.
+        std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
+        for (u32 i = 0; i < bindings.size(); ++i) {
+            bindings[i] = {.binding = i,
+                .descriptorType = i < 5 ? vk::DescriptorType::eCombinedImageSampler
+                                        : vk::DescriptorType::eStorageImage,
+                .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute};
+        }
+        layer_desc_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = u32(bindings.size()), .pBindings = bindings.data()}));
+        const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 24};
+        layer_pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1, .pSetLayouts = &*layer_desc_layout,
+            .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
+        layer_pipeline = compute(SCENE_LAYER_COMP, *layer_pipeline_layout);
+    }
+}
+
+void TemporalUpscaler::OnSceneFinal(VideoCore::ImageId color, bool whole) {
+    if (ui_phase || !color) {
+        return;
+    }
+    scene_finals += color != scene_final;
+    scene_final = color;
+    scene_final_whole = whole;
+}
+
+void TemporalUpscaler::OnGuestWrite(VAddr address, u64 size) {
+    for (auto& layer : layers) {
+        if (address < layer.address + u64(layer.width) * layer.height * 4 &&
+            layer.address < address + size) {
+            layer.stale = true; // until the scene is drawn into it again
+        }
+    }
+}
+
+void TemporalUpscaler::DropLayers() {
+    if (layers.empty()) {
+        return;
+    }
+    // Commands recorded this frame may still read them.
+    scheduler.DeferOperation([old = std::move(layers)]() mutable { old.clear(); });
+    layers.clear();
+}
+
+int TemporalUpscaler::ShownLayer(VideoCore::ImageId image) const {
+    // The UI of a frame whose scene went into a layer; a layer not drawn this frame (the
+    // listener's portrait) keeps the copy of what was last drawn into it.
+    if (!ui_phase || frame_from_scene || !image) {
+        return -1;
+    }
+    const auto& info = texture_cache.GetImage(image).info;
+    for (u32 i = 0; i < layers.size(); ++i) {
+        const Layer& layer = layers[i];
+        if (layer.address == info.guest_address && layer.width == info.size.width &&
+            layer.height == info.size.height && layer.age && !layer.stale) {
+            return int(i);
+        }
+    }
+    return -1;
+}
+
+TemporalUpscaler::Layer* TemporalUpscaler::PrepareLayer(u32 w, u32 h, u32 ow, u32 oh) {
+    // This frame's scene, and so its depth and motion: one layer, the top-left of the scene's
+    // targets texel for texel. Anything else is shown as the game drew it (and the next frame
+    // drops its jitter, see OnFrameStart).
+    if (!Ps4RtSettings::Get().valkyria || frame_from_scene || !scene_final ||
+        scene_final == ldr_target || scene_finals != 1 || !scene_final_whole) {
+        return nullptr;
+    }
+    auto& image = texture_cache.GetImage(scene_final);
+    const u32 lw = image.info.size.width, lh = image.info.size.height;
+    const u32 low = SceneLayer::OutputExtent(lw, w, ow), loh = SceneLayer::OutputExtent(lh, h, oh);
+    if (image.info.pixel_format != vk::Format::eR8G8B8A8Unorm || lw > w || lh > h || low < lw ||
+        loh < lh) {
+        return nullptr;
+    }
+    const VAddr address = image.info.guest_address;
+    auto it = std::ranges::find(layers, address, &Layer::address);
+    if (it == layers.end()) {
+        // The speaker and the listeners; a talk has not shown more than two.
+        if (layers.size() >= 4) {
+            auto oldest = std::ranges::min_element(layers, {}, &Layer::frame);
+            scheduler.DeferOperation([old = std::move(*oldest)]() mutable {});
+            layers.erase(oldest);
+        }
+        it = layers.emplace(layers.end());
+        it->address = address;
+    }
+    Layer& layer = *it;
+    const auto device = instance.GetDevice();
+    if (layer.width != lw || layer.height != lh || layer.out_width != low ||
+        layer.out_height != loh) {
+        scheduler.DeferOperation([old = std::move(layer)]() mutable {});
+        layer = Layer();
+        layer.address = address;
+        layer.width = lw;
+        layer.height = lh;
+        layer.out_width = low;
+        layer.out_height = loh;
+        const auto create = [&](VideoCore::UniqueImage& target, vk::UniqueImageView& view,
+                                vk::Format format, u32 width, u32 height) {
+            target = VideoCore::UniqueImage(device, instance.GetAllocator());
+            target.Create(vk::ImageCreateInfo{
+                .imageType = vk::ImageType::e2D,
+                .format = format,
+                .extent = {width, height, 1},
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = vk::SampleCountFlagBits::e1,
+                .tiling = vk::ImageTiling::eOptimal,
+                // Colour attachment: Mirror's views are made for either use.
+                .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                         vk::ImageUsageFlagBits::eColorAttachment,
+                .initialLayout = vk::ImageLayout::eUndefined,
+            });
+            view = Check(device.createImageViewUnique({
+                .image = vk::Image(target),
+                .viewType = vk::ImageViewType::e2D,
+                .format = format,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            }));
+        };
+        for (u32 i = 0; i < 2; ++i) {
+            create(layer.copies[i], layer.copy_views[i], vk::Format::eR16G16B16A16Sfloat, low,
+                   loh);
+            create(layer.seen[i], layer.seen_views[i], vk::Format::eR16G16B16A16Sfloat, lw, lh);
+        }
+    }
+    if (layer.source_image != image.GetImage() || layer.source_uid != image.image_uid) {
+        if (layer.source) {
+            scheduler.DeferOperation([old = std::move(layer.source)]() mutable {});
+        }
+        layer.source_image = image.GetImage();
+        layer.source_uid = image.image_uid;
+        layer.source = Check(device.createImageViewUnique({
+            .image = layer.source_image,
+            .viewType = vk::ImageViewType::e2D,
+            .format = image.info.pixel_format,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        }));
+    }
+    // Not drawn in the frame before (another speaker's turn): the copy is of an older pose.
+    if (layer.frame + 1 != layer_frame) {
+        layer.age = 0;
+    }
+    runtime.Transit(&image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                    vk::AccessFlagBits2::eShaderRead);
+    return &layer;
+}
+
+void TemporalUpscaler::GatherLayer(vk::CommandBuffer cmdbuf, Layer& layer, vk::ImageView depth) {
+    const u32 read = layer.current, write = 1 - layer.current;
+    // The scene's writes and the copy's last ones before the reads here.
+    const vk::MemoryBarrier2 inputs{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite |
+                         vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead |
+                         vk::AccessFlagBits2::eShaderStorageWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &inputs});
+    std::array<vk::ImageMemoryBarrier2, 4> barriers{};
+    for (u32 i = 0; i < barriers.size(); ++i) {
+        barriers[i] = {.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite |
+                             vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead |
+                             vk::AccessFlagBits2::eShaderStorageWrite,
+            .oldLayout = layer.laid_out ? vk::ImageLayout::eGeneral : vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = i < 2 ? vk::Image(layer.copies[i]) : vk::Image(layer.seen[i - 2]),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    }
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(barriers.size()),
+                             .pImageMemoryBarriers = barriers.data()});
+    const std::array<vk::ImageView, 7> views{
+        *layer.source, depth, *motion_view, *layer.copy_views[read], *layer.seen_views[read],
+        *layer.copy_views[write], *layer.seen_views[write]};
+    std::array<vk::DescriptorImageInfo, 7> infos{};
+    std::array<vk::WriteDescriptorSet, 7> writes{};
+    for (u32 i = 0; i < infos.size(); ++i) {
+        infos[i] = {.sampler = i < 5 ? *taa_sampler : vk::Sampler{},
+                    .imageView = views[i], .imageLayout = vk::ImageLayout::eGeneral};
+        writes[i] = {.dstBinding = i, .descriptorCount = 1,
+            .descriptorType = i < 5 ? vk::DescriptorType::eCombinedImageSampler
+                                    : vk::DescriptorType::eStorageImage,
+            .pImageInfo = &infos[i]};
+    }
+    // The first frame of a copy reads neither it nor the previous frame (both undefined).
+    const struct Params {
+        std::array<float, 2> jitter, previous_jitter;
+        float newest;
+        u32 reset;
+    } params{jitter, layer.jitter, SceneLayer::NewestWeight(layer.age), layer.age == 0};
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *layer_pipeline);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *layer_pipeline_layout, 0,
+                                writes);
+    cmdbuf.pushConstants(*layer_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+                         sizeof(params), &params);
+    cmdbuf.dispatch((layer.out_width + 7) / 8, (layer.out_height + 7) / 8, 1);
+    // The UI samples the copy.
+    const vk::MemoryBarrier2 written{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &written});
+    if (layer.age == 0) {
+        std::printf("Valkyria: layer %ux%u gathered into %ux%u\n", layer.width, layer.height,
+                    layer.out_width, layer.out_height);
+    }
+    layer.current = write;
+    layer.age = std::min(layer.age + 1, 1u << 20);
+    layer.frame = layer_frame;
+    layer.jitter = jitter;
+    layer.laid_out = true;
+    layer.stale = false;
+    layer_gathered = true;
 }
 
 void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
@@ -730,7 +967,7 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
         std::array<float, 2> jitter;
         u32 reset, pad;
         std::array<std::array<float, 4>, 3> depth;
-    } params{jitter, reset ? 1u : 0u, std::getenv("PS4RT_TAA_DIAGNOSTICS") ?
+    } params{FrameJitter(), reset ? 1u : 0u, std::getenv("PS4RT_TAA_DIAGNOSTICS") ?
                  u32(std::clamp(std::atoi(std::getenv("PS4RT_TAA_DIAGNOSTICS")),1,3)) : 0u,
              camera_motion.TaaDepthParameters()};
     // Optional techniques for A/B in one run (PS4RT_TOGGLE_FILE bits 51-54): tonemapped blending,
@@ -1180,7 +1417,7 @@ void TemporalUpscaler::Run() {
         info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
         // Toggle 1 << 26 (tests): the opposite sign convention for FSR.
         const float sign = Ps4RtToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
-        info.jitterOffset = {sign * jitter[0], sign * jitter[1]};
+        info.jitterOffset = {sign * FrameJitter()[0], sign * FrameJitter()[1]};
         info.motionVectorScale = {1.0f, 1.0f};
         info.renderSize = {w, h};
         info.outputSize = {ow, oh};
@@ -1655,6 +1892,7 @@ void TemporalUpscaler::RunScaled() {
     vk::Image depth_image = depth.GetImage(), color_image = color.GetImage();
     vk::ImageView depth_view{}, color_view{};
     u32 source_width = iw, source_height = ih;
+    Layer* layer = nullptr;
     if (!scaled_session && !Ps4RtSettings::Get().valkyria) {
         VideoCore::ImageViewInfo ci, di;
         ci.format = color.info.pixel_format;
@@ -1680,6 +1918,7 @@ void TemporalUpscaler::RunScaled() {
                             vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
+        layer = PrepareLayer(w, h, ow, oh);
         runtime.FlushBarriers();
     }
 
@@ -1715,6 +1954,9 @@ void TemporalUpscaler::RunScaled() {
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
             vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+    if (layer) {
+        GatherLayer(cmdbuf, *layer, depth_view);
+    }
 
     const auto now = std::chrono::steady_clock::now();
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
@@ -1845,7 +2087,7 @@ void TemporalUpscaler::RunScaled() {
 
     info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
     const float sign = Ps4RtToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
-    info.jitterOffset = {sign * jitter[0], sign * jitter[1]};
+    info.jitterOffset = {sign * FrameJitter()[0], sign * FrameJitter()[1]};
     info.motionVectorScale = {1.0f, 1.0f};
     info.renderSize = {w, h};
     info.outputSize = {ow, oh};
@@ -2042,6 +2284,15 @@ bool TemporalUpscaler::RedirectDepth(VideoCore::ImageId depth, Target& target, b
 bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
                                        const VideoCore::ImageViewInfo& info, vk::ImageView& view,
                                        vk::ImageLayout& layout) {
+    // The copy holds the texture's stored values: for a view that reads them as they are.
+    if (const int index = layers.empty() || info.format != vk::Format::eR8G8B8A8Unorm
+                              ? -1 : ShownLayer(image); index >= 0) {
+        Layer& layer = layers[index];
+        view = Mirror(vk::Image(layer.copies[layer.current]), layer.mirrors[layer.current],
+                      vk::Format::eR16G16B16A16Sfloat, info.mapping);
+        layout = vk::ImageLayout::eGeneral;
+        return true;
+    }
     if (!display_redirect || image != ui_color) {
         return false;
     }
@@ -2127,7 +2378,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .render_height = h,
         .preset = settings.valkyria ? Fsr4Upscaler::ValkyriaPreset(w, h, ow, oh)
                                    : applied_preset,
-        .jitter = {sign * jitter[0], sign * jitter[1]},
+        .jitter = {sign * FrameJitter()[0], sign * FrameJitter()[1]},
         .frame_ms = frame_ms,
         .near_plane = camera_motion.Near(),
         .far_plane = settings.valkyria ? camera_motion.Far() : 3000.0f,
@@ -2190,8 +2441,8 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
                        vk::ImageAspectFlagBits::eColor, w, h},
             .output = {vk::Image(output_image), *output_view, vk::Format::eR16G16B16A16Sfloat,
                        vk::ImageAspectFlagBits::eColor, ow, oh},
-            .jitter_x = sign * jitter[0],
-            .jitter_y = sign * jitter[1],
+            .jitter_x = sign * FrameJitter()[0],
+            .jitter_y = sign * FrameJitter()[1],
             .reset = reset,
             .frame_ms = frame_ms,
             .sharpness = settings.sharpen ? std::min(settings.sharpness.load(), 1.0f) : 0.0f,
