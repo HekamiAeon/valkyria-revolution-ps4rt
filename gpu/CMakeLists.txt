@@ -284,7 +284,8 @@ target_include_directories(valkyria-wide-patches-test PRIVATE ..)
 target_link_libraries(valkyria-wide-patches-test PRIVATE dl m)
 # Valkyria 60 FPS startup patches on a synthetic image (no game data).
 add_executable(valkyria-frame-rate-test EXCLUDE_FROM_ALL ../tests/test_valkyria_frame_rate.cpp
-    shim/valkyria_frame_rate.cpp shim/valkyria_wide_patches.cpp shim/valkyria_wide_ui.c)
+    shim/valkyria_frame_rate.cpp shim/valkyria_camera_cuts.cpp shim/valkyria_wide_patches.cpp
+    shim/valkyria_wide_ui.c)
 target_compile_options(valkyria-frame-rate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
     -Wno-misleading-indentation)
 target_include_directories(valkyria-frame-rate-test PRIVATE ..)

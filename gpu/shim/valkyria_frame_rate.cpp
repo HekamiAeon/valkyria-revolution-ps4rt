@@ -21,6 +21,8 @@
 
 #include <cstdio>
 
+#include "valkyria_camera_cuts.h"
+
 namespace ValkyriaFrameRate {
 namespace {
 
@@ -200,14 +202,28 @@ std::vector<Write> Writes() {
     // vmulss xmm0,xmm0,[step] -> [frame unit].
     for (uint64_t at : {0x36c87d, 0x36d19c, 0x36d56e, 0x3a97f2, 0x686625})
         add(at, Load("c5fa5905", at, Step), Load("c5fa5905", at, Unit));
+
+    // Keyframed camera animations are sampled between their frames at 60, which blends the
+    // two shots of a cut for one update: both clip samplers go through hooks that keep the
+    // earlier frame across a cut (valkyria_camera_cuts.h). Their entries are verified here
+    // and replaced by Start.
+    for (uint64_t at : {ValkyriaCameraCuts::MotionSampler, ValkyriaCameraCuts::ViewSampler}) {
+        const Bytes entry(std::begin(ValkyriaCameraCuts::SamplerEntry), std::end(ValkyriaCameraCuts::SamplerEntry));
+        add(at, entry, entry);
+    }
     return writes;
 }
 
 bool Start(uintptr_t base, std::string* problem) {
     const std::vector<Write> writes = Writes();
     if (!ValkyriaWidePatches::Matches(base, writes, problem)) return false;
+    // The camera hooks' way back into the game is the only step that can fail after the
+    // check; nothing is written before it.
+    if (!ValkyriaCameraCuts::Prepare(base, problem)) return false;
     ValkyriaWidePatches::Apply(base, writes);
-    std::printf("Valkyria 60 FPS (experimental): on, %zu startup patches\n", writes.size());
+    ValkyriaCameraCuts::Install(base);
+    std::printf("Valkyria 60 FPS (experimental): on, %zu startup patches and 2 camera hooks\n",
+                writes.size() - 2);
     return true;
 }
 

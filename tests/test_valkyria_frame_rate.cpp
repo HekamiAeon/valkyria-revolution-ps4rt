@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Valkyria 60 FPS startup patches on a synthetic image (no game data): well-formed writes that
-// stay clear of the canvas patches, all-or-nothing verification, and the rewritten fragments
-// (event camera, mouth track, subtitle window) executed at one and two ticks an update.
+// stay clear of the canvas patches, all-or-nothing verification, the rewritten fragments
+// (event camera, mouth track, subtitle window) executed at one and two ticks an update, and
+// the camera clip hooks on synthetic clips: a cut keeps its earlier frame.
 // Optional argument: a decrypted eboot.elf, checked read-only to match every patch's original
 // bytes.
 #include <sys/mman.h>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "gpu/shim/valkyria_camera_cuts.h"
 #include "gpu/shim/valkyria_frame_rate.h"
 
 using ValkyriaFrameRate::Start;
@@ -107,6 +110,13 @@ void Patched(Image& image) {
     assert(Start(image.base(), &problem));
 }
 
+bool Hooked(const Image& image, uint64_t at) {
+    return image.data[at] == 0xff && image.data[at + 1] == 0x25 && image.data[at + 14] == 0x90;
+}
+bool HookSite(const Write& write) {
+    return write.at == ValkyriaCameraCuts::MotionSampler || write.at == ValkyriaCameraCuts::ViewSampler;
+}
+
 int32_t Disp(const Image& image, uint64_t at) {
     int32_t value;
     std::memcpy(&value, image.data + at, 4);
@@ -142,7 +152,7 @@ void TestStart() {
     Stock(image);
     std::string problem;
     assert(Start(image.base(), &problem) && problem.empty());
-    for (const Write& write : Writes()) assert(image.has(write, true));
+    for (const Write& write : Writes()) assert(HookSite(write) ? Hooked(image, write.at) : image.has(write, true));
     // The clock: a minimum of one tick, the frame unit left at the game's 2.0.
     assert(image.data[0x3d319f] == 0xbb && image.u(0x3d31a0) == 1 && image.u(0x3d2fbb) == 1);
     // Operands: the pinned times read the frame unit, the gates the tick count, the camera
@@ -158,8 +168,8 @@ void TestStart() {
         assert(image.data[call] == 0xe8 && call + 5 + Disp(image, call + 1) == helper);
     // A second start finds its own bytes and changes nothing.
     assert(!Start(image.base(), &problem) && problem.rfind("game code differs at 0x", 0) == 0);
-    for (const Write& write : Writes()) assert(image.has(write, true));
-    std::puts("PASS: start writes every patch; operands and calls reach their targets");
+    for (const Write& write : Writes()) assert(HookSite(write) ? Hooked(image, write.at) : image.has(write, true));
+    std::puts("PASS: start writes every patch and both camera hooks; operands and calls reach their targets");
 }
 
 void TestFailClosed() {
@@ -177,6 +187,7 @@ void TestFailClosed() {
         for (const Write& write : writes)
             assert(&write == &odd || write.before == write.after || image.has(write, true) == false);
         for (const Write& write : writes) assert(&write == &odd || image.has(write, false));
+        assert(odd.at == ValkyriaCameraCuts::MotionSampler || !Hooked(image, ValkyriaCameraCuts::MotionSampler));
     }
     void* hole = mmap(nullptr, ImageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     assert(hole != MAP_FAILED);
@@ -318,6 +329,151 @@ void TestSubtitleWindow() {
     std::puts("PASS: the subtitle window's fade runs every update at two ticks, every second at one");
 }
 
+using Pose = std::array<float, ValkyriaCameraCuts::PoseSize>;
+
+Pose Shot(float px, float py, float pz, float tx, float ty, float tz, float roll = 0) {
+    Pose pose{};
+    pose[0] = px, pose[1] = py, pose[2] = pz, pose[4] = tx, pose[5] = ty, pose[6] = tz, pose[14] = roll;
+    return pose;
+}
+
+void TestCutRules() {
+    using ValkyriaCameraCuts::MotionCut;
+    using ValkyriaCameraCuts::ViewCut;
+    const auto motion = [](const Pose& p, const Pose& a, const Pose& b, const Pose& q) {
+        return MotionCut(p.data(), a.data(), b.data(), q.data());
+    };
+    // Looking 10 units ahead from x: a dolly along x.
+    const auto at = [](float x) { return Shot(x, 0, 0, x, 0, 10); };
+    const Pose other = Shot(40, 5, -20, 30, 0, 0);
+    assert(motion(at(0), at(0), other, other));                    // between two still shots
+    assert(motion(at(0), at(0.1f), other, Shot(40.1f, 5, -20, 30, 0, 0))); // between two moving shots
+    assert(motion(at(0), at(0), Shot(0, 0, 0, 8, 0, 6), Shot(0, 0, 0, 8, 0, 6))); // turned on the spot
+    assert(motion(at(0), at(0), Shot(0, 0, 0, 0, 0, 10, 1), Shot(0, 0, 0, 0, 0, 10, 1))); // rolled over
+    assert(!motion(at(0), at(0), at(0), at(0)));                   // still
+    assert(!motion(at(0), at(0.1f), at(0.2f), at(0.3f)));          // steady move
+    assert(!motion(at(0), at(0), at(0.01f), at(0.04f)));           // easing in from rest
+    assert(!motion(at(0.04f), at(0.01f), at(0), at(0)));           // easing out to rest
+    assert(!motion(at(0), at(0), at(0.015625f), at(0.015625f)));   // one quantised step of a slow drift
+    assert(!motion(at(0), at(0), at(0.3f), at(0.3f)));             // a nudge too small to be a new shot
+    assert(!motion(at(0), at(3), at(6), at(9)));                   // a fast, even pan
+    assert(!motion(at(0), at(0.5f), at(-0.3f), at(0.4f)));         // a shaking camera
+    assert(!motion(Shot(0, 0, 0, 0, 0, 10, 0.f), Shot(0, 0, 0, 0, 0, 10, 0.02f),
+                   Shot(0, 0, 0, 0, 0, 10, 0.04f), Shot(0, 0, 0, 0, 0, 10, 0.06f))); // a slow roll
+    const auto view = [](float p, float a, float b, float q) {
+        Pose poses[4] = {};
+        const float values[4] = {p, a, b, q};
+        for (int i = 0; i < 4; ++i) poses[i][4] = values[i], poses[i][7] = 1, poses[i][9] = 0.5f;
+        return ViewCut(poses[0].data(), poses[1].data(), poses[2].data(), poses[3].data());
+    };
+    assert(view(30, 30, 55, 55) && view(30, 30.5f, 55, 54.5f));
+    assert(!view(30, 30, 30, 30) && !view(30, 32, 34, 36) && !view(30, 30, 30.5f, 30.5f));
+    assert(!view(0, 0, 0.004f, 0.004f) && !view(30, 30, 31, 33));
+    std::puts("PASS: a cut is a one-frame step out of line with the motion around it");
+}
+
+/// A synthetic clip sampler behind the shipped entry bytes: calls back with (clip, time).
+struct Track {
+    std::vector<Pose> frames;
+    size_t offset = 0; ///< where the pose goes in the clip
+    int calls = 0;
+    void sample(uint64_t* clip, float time) {
+        ++calls;
+        uint8_t* const motion = reinterpret_cast<uint8_t*>(clip[1]);
+        if (!motion) return; // not loaded yet
+        time = std::clamp(time, 0.f, float(frames.size() - 1));
+        std::memcpy(motion + 0x70, &time, 4);
+        const size_t frame = size_t(time);
+        const Pose& a = frames[frame];
+        const Pose& b = frames[std::min(frame + 1, frames.size() - 1)];
+        Pose pose;
+        for (size_t i = 0; i < pose.size(); ++i) pose[i] = a[i] + (b[i] - a[i]) * (time - float(frame));
+        std::memcpy(reinterpret_cast<uint8_t*>(clip) + offset, pose.data(), sizeof(pose));
+    }
+};
+Track motion_track, view_track;
+void MotionCallback(uint64_t* clip, float time) { motion_track.sample(clip, time); }
+void ViewCallback(uint64_t* clip, float time) { view_track.sample(clip, time); }
+
+void PlantSampler(Image& image, uint64_t at, void (*callback)(uint64_t*, float)) {
+    uint8_t* code = image.data + at + sizeof(ValkyriaCameraCuts::SamplerEntry);
+    const uint8_t head[] = {0x48, 0x89, 0xdf,        // mov rdi,rbx
+                            0xc5, 0xf8, 0x28, 0xc2,  // vmovaps xmm0,xmm2
+                            0x48, 0xb8};             // movabs rax,callback
+    const uint8_t tail[] = {0xff, 0xd0,              // call rax
+                            0x48, 0x83, 0xc4, 0x08,  // add rsp,8
+                            0x5b, 0x5d, 0xc3};       // pop rbx ; pop rbp ; ret
+    std::memcpy(code, head, sizeof(head));
+    std::memcpy(code + sizeof(head), &callback, 8);
+    std::memcpy(code + sizeof(head) + 8, tail, sizeof(tail));
+}
+
+void TestCameraHooks() {
+    Image image;
+    Patched(image);
+    PlantSampler(image, ValkyriaCameraCuts::MotionSampler, MotionCallback);
+    PlantSampler(image, ValkyriaCameraCuts::ViewSampler, ViewCallback);
+    const auto sample_motion = reinterpret_cast<void (*)(uint64_t*, float)>(image.data + ValkyriaCameraCuts::MotionSampler);
+    const auto sample_view = reinterpret_cast<void (*)(uint64_t*, float)>(image.data + ValkyriaCameraCuts::ViewSampler);
+    // Frames 0-3: a slow dolly. Frames 4-7: another shot, also moving. The cut is 3 -> 4.
+    motion_track.offset = 0x10;
+    for (int i = 0; i < 4; ++i) motion_track.frames.push_back(Shot(0.1f * i, 0, 0, 0.1f * i, 0, 10));
+    for (int i = 4; i < 8; ++i) motion_track.frames.push_back(Shot(40 + 0.1f * i, 5, -20, 30, 0, 0));
+    uint8_t motion[0x80] = {};
+    uint64_t clip[0x100 / 8] = {};
+    clip[1] = reinterpret_cast<uint64_t>(motion);
+    const auto pose = [&] {
+        Pose out;
+        std::memcpy(out.data(), reinterpret_cast<uint8_t*>(clip) + 0x10, sizeof(out));
+        return out;
+    };
+    const auto current = [&] {
+        float time;
+        std::memcpy(&time, motion + 0x70, 4);
+        return time;
+    };
+    const auto run = [&](float time) {
+        motion_track.calls = 0;
+        sample_motion(clip, time);
+        return pose();
+    };
+    assert(run(2) == motion_track.frames[2] && motion_track.calls == 1 && current() == 2); // as shipped
+    Pose half = run(2.5f); // inside a shot: between its frames
+    assert(std::abs(half[0] - 0.25f) < 1e-6f && half[6] == 10 && current() == 2.5f);
+    half = run(0.5f);
+    assert(std::abs(half[0] - 0.05f) < 1e-6f && current() == 0.5f);
+    assert(run(3) == motion_track.frames[3]);
+    assert(run(3.5f) == motion_track.frames[3] && current() == 3.5f); // the cut: the earlier frame stays
+    assert(run(4) == motion_track.frames[4] && current() == 4);
+    half = run(4.5f); // the new shot moves on between its frames
+    assert(std::abs(half[0] - 40.45f) < 1e-4f && half[4] == 30 && current() == 4.5f);
+    assert(run(7.5f) == motion_track.frames[7]); // past the end: the last frame
+    clip[1] = 0; // not loaded: nothing sampled, nothing touched
+    const Pose before = pose();
+    sample_motion(clip, 3.5f);
+    assert(pose() == before);
+
+    // The view clip: a steady zoom, then another lens at the cut 3 -> 4.
+    view_track.offset = 0x50;
+    for (int i = 0; i < 8; ++i) {
+        Pose lens{};
+        lens[4] = i < 4 ? 30 + 0.2f * i : 55;
+        view_track.frames.push_back(lens);
+    }
+    uint8_t view_motion[0x80] = {};
+    uint64_t view_clip[0x100 / 8] = {};
+    view_clip[1] = reinterpret_cast<uint64_t>(view_motion);
+    const auto lens = [&](float time) {
+        sample_view(view_clip, time);
+        float value;
+        std::memcpy(&value, reinterpret_cast<uint8_t*>(view_clip) + 0x50 + 4 * 4, 4);
+        return value;
+    };
+    assert(lens(1) == 30.2f && std::abs(lens(1.5f) - 30.3f) < 1e-5f);
+    assert(lens(3.5f) == 30.6f && lens(4) == 55 && lens(4.5f) == 55);
+    std::puts("PASS: camera clips are sampled between frames inside a shot and keep the earlier frame across a cut");
+}
+
 /// The PT_LOAD bytes of an eboot.elf at their virtual addresses.
 bool LoadElf(const char* path, Image& image) {
     std::ifstream file(path, std::ios::binary);
@@ -351,6 +507,8 @@ int main(int argc, char** argv) {
     TestCamera();
     TestMouthTrack();
     TestSubtitleWindow();
+    TestCutRules();
+    TestCameraHooks();
     if (argc > 1) {
         Image image;
         assert(LoadElf(argv[1], image));

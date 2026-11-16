@@ -16,10 +16,12 @@ namespace ValkyriaFrameRate {
 
 using ValkyriaWidePatches::Write;
 
-/// Every write of the option, each with the original bytes it replaces.
+/// Every write of the option, each with the original bytes it replaces; a write whose bytes
+/// stay the same is only verified.
 std::vector<Write> Writes();
-/// The whole option at base, after every original byte matched. False changes nothing (the
-/// game runs at its own 30) and names the reason.
+/// The whole option at base, after every original byte matched: the writes, then the hooks on
+/// the camera clip samplers (valkyria_camera_cuts.h). False changes nothing (the game runs at
+/// its own 30) and names the reason.
 bool Start(uintptr_t base, std::string* problem);
 
 } // namespace ValkyriaFrameRate
