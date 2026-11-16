@@ -217,6 +217,7 @@ private:
     // from one of them, and (latched for the next frame) a scene that never reached it.
     std::vector<VAddr> scene_writes;
     VideoCore::ImageId last_scene_write{};
+    VideoCore::ImageId frame_target{}; ///< Valkyria: where the finished frame was copied
     bool frame_from_scene = true;
     bool scene_offscreen = false;
     bool sketch_frame = false; ///< this frame is the pencil sketch

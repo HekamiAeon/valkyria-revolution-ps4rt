@@ -384,6 +384,7 @@ bool TemporalUpscaler::OnFrameStart() {
     }
     scene_offscreen = offscreen;
     frame_from_scene = true;
+    frame_target = {};
     // The pencil sketch leaves only thin outlines on flat paper. FSR 4 keeps moved outlines in
     // its history as trails of copies (FSR 3.1 clamps them away): each sketch frame is upscaled
     // on its own, without jitter, which needs the history it no longer has.
@@ -1382,6 +1383,7 @@ void TemporalUpscaler::OnFrameCopy(u64 vs_hash, u64 ps_hash, VideoCore::ImageId 
         vs_hash != 0xbc13f33e || ps_hash != 0x505ccebb || !source) {
         return;
     }
+    frame_target = color;
     frame_from_scene =
         std::find(scene_writes.begin(), scene_writes.end(), source) != scene_writes.end();
 }
@@ -1409,7 +1411,11 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         // The first UI layer over the finished frame; the talk portrait's stencil mask (alpha,
         // depth and stencil writes) comes before its first blended draw and must be drawn into
         // the output-size UI depth: the guest stencil does not reach it (no D32S8 blit on RADV).
-        (vs_hash==0xbc13f33e && ps_hash==0x505ccebb && layer) :
+        // Over a live scene, any layer after the frame's copy into this target is 2D
+        // composition whatever its shaders (the black-and-white narration panel, a still
+        // picture): drawn before the upscale it was treated as jittered and shook.
+        (layer && ((vs_hash==0xbc13f33e && ps_hash==0x505ccebb) ||
+                   (frame_target && color == frame_target && camera_motion.Ready()))) :
         (vs_hash==ui_trigger_vs || UiComposition::MovieShader(vs_hash) ||
          (scaled_session && native_viewport));
     const bool ui_draw = movie &&
