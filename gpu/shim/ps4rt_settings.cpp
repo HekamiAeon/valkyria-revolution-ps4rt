@@ -114,6 +114,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.deferred_readback = i != 0;
     } else if (key == "stale_readback") {
         v.stale_readback = i != 0;
+    } else if (key == "experimental_60fps") {
+        v.sixty_fps = v.valkyria && i != 0;
     } else if (key == "anisotropy") {
         v.anisotropy = Ps4RtGraphics::ParseAnisotropy(i);
     } else if (key == "vibration") {
@@ -199,7 +201,7 @@ void Load(bool valkyria) {
         {"PS4RT_STALE_READBACK", "stale_readback"},     {"PS4RT_FSR1", "fsr1"},
         {"PS4RT_RCAS", "rcas"},                        {"PS4RT_FRAMES_AHEAD", "frames_queued"},
         {"PS4RT_ANISOTROPY", "anisotropy"},            {"PS4RT_VIBRATION", "vibration"},
-        {"VALKYRIA_AA", "spatial_aa"},
+        {"VALKYRIA_AA", "spatial_aa"},                 {"VALKYRIA_60FPS", "experimental_60fps"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env); value && value[0]) {
@@ -250,6 +252,7 @@ void Load(bool valkyria) {
     v.startup_deferred_readback = v.deferred_readback;
     v.startup_stale_readback = v.stale_readback;
     v.startup_anisotropy = v.anisotropy;
+    v.startup_sixty_fps = v.sixty_fps;
     if (save) Save();
 }
 
@@ -259,7 +262,8 @@ bool GraphicsNeedRestart() {
            v.engine_fps != v.startup_engine_fps ||
            v.deferred_readback != v.startup_deferred_readback ||
            v.stale_readback != v.startup_stale_readback ||
-           v.anisotropy != v.startup_anisotropy;
+           v.anisotropy != v.startup_anisotropy ||
+           v.sixty_fps != v.startup_sixty_fps;
 }
 
 void ActivateCanvas(int width, int height) {
@@ -272,6 +276,10 @@ void ActivateCanvas(int width, int height) {
 
 void CanvasUnavailable(const char* problem) {
     Get().canvas_problem = problem;
+}
+
+void SixtyFpsUnavailable(const char* problem) {
+    Get().sixty_fps_problem = problem;
 }
 
 void SceneSize(int& width, int& height) {
@@ -437,6 +445,7 @@ void Save() {
                  int(v.restart_unconfirmed.load()));
     std::fprintf(file, "anisotropy=%d\nvibration=%d\n", v.anisotropy.load(), v.vibration.load());
     std::fprintf(file, "spatial_aa=%d\n", int(v.spatial_aa.load()));
+    if (v.valkyria) std::fprintf(file, "experimental_60fps=%d\n", int(v.sixty_fps.load()));
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");

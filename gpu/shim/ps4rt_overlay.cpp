@@ -419,6 +419,10 @@ void ValkyriaGraphics() {
         ChoiceRow("Anisotropic filtering", s.anisotropy, anisotropy_labels,
                   Ps4RtGraphics::Anisotropies.data(), int(Ps4RtGraphics::Anisotropies.size()),
                   "Sharpens textures viewed at an angle. Works with FSR. Applies after restarting the game.");
+        CheckRow("60 FPS (experimental)", s.sixty_fps,
+                 "Runs the game at 60 frames a second instead of its original 30. Experimental: some "
+                 "animations or timings may still differ from the original. Switch it off to return to "
+                 "the original 30. Applies after restarting the game.");
         Row("Sharpening");
         int strength = s.sharpen ? int(s.sharpness * 100.0f + 0.5f) : 0;
         if (ImGui::SliderInt("##value", &strength, 0, 100, "%d%%")) {
@@ -442,6 +446,11 @@ void ValkyriaGraphics() {
             ImGui::TextWrapped("Restart the game to apply the selected anisotropic filtering.");
         else
             ImGui::TextDisabled("Anisotropic filtering changes require a game restart.");
+        if (s.sixty_fps != s.startup_sixty_fps)
+            ImGui::TextWrapped("%s", s.sixty_fps ? "Restart the game to run it at 60 FPS (experimental)."
+                                                 : "Restart the game to return to its original 30 FPS.");
+        if (const char* problem = s.sixty_fps_problem)
+            ImGui::TextWrapped("60 FPS could not start this launch (%s); running at the original 30.", problem);
         if (!s.fsr4_supported) ImGui::TextWrapped("FSR 4 v07 requires GPU features unavailable on this device. FSR 3.1 remains available.");
         if (const char* problem = s.fsr4_problem.load()) ImGui::TextWrapped("%s", problem);
     }
@@ -602,7 +611,7 @@ int RestartChanges() {
     const auto& s = Ps4RtSettings::Get();
     return (s.render_resolution != s.startup_render_resolution) + (s.engine_fps != s.startup_engine_fps) +
            (s.deferred_readback != s.startup_deferred_readback) + (s.stale_readback != s.startup_stale_readback) +
-           (s.anisotropy != s.startup_anisotropy);
+           (s.anisotropy != s.startup_anisotropy) + (s.sixty_fps != s.startup_sixty_fps);
 }
 
 // Render game art only within the settings window, below all its controls.

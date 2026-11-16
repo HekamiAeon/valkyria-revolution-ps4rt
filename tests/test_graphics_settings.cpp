@@ -155,6 +155,29 @@ int main() {
     Ps4RtSettings::Load(true);
     assert(v.spatial_aa);
     Env("VALKYRIA_AA","");
+    // 60 FPS (experimental): off unless chosen, a startup option, saved for Valkyria.
+    assert(!v.sixty_fps && !v.startup_sixty_fps && !v.sixty_fps_problem);
+    Ps4RtSettings::Save();
+    assert(Read(path).find("experimental_60fps=0\n") != std::string::npos);
+    v.sixty_fps = true;
+    assert(Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    assert(Read(path).find("experimental_60fps=1\n") != std::string::npos);
+    Ps4RtSettings::Load(true);
+    assert(v.sixty_fps && v.startup_sixty_fps && !Ps4RtSettings::GraphicsNeedRestart());
+    v.sixty_fps = false; // back to the original 30 on the next launch
+    assert(Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    Ps4RtSettings::Load(true);
+    assert(!v.sixty_fps && !v.startup_sixty_fps);
+    Env("VALKYRIA_60FPS", "1");
+    Ps4RtSettings::Load(true);
+    assert(v.sixty_fps && v.startup_sixty_fps);
+    Env("VALKYRIA_60FPS", "");
+    Ps4RtSettings::Load(true);
+    assert(!v.sixty_fps && !v.startup_sixty_fps);
+    Ps4RtSettings::SixtyFpsUnavailable("game code differs at 0x3d319f");
+    assert(v.sixty_fps_problem);
 
     // A new render resolution is an attempt: marked in the file before the launch tries it, and
     // undone by the next launch when that one never reached the game.

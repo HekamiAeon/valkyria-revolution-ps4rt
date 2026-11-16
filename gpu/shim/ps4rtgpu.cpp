@@ -4,6 +4,7 @@
 #include "ps4rt_png.h"
 #include "ps4rt_graphics.h"
 #include "ps4rt_settings.h"
+#include "valkyria_frame_rate.h"
 #include "valkyria_wide_patches.h"
 #include "ps4rt_copy.h"
 #ifndef _WIN32
@@ -229,7 +230,7 @@ extern "C" int ps4rtgpu_init(const Ps4RtGpuConfig* config) {
         settings.applied_engine_fps=60;
         settings.deferred_readback=settings.startup_deferred_readback=false;
         settings.stale_readback=settings.startup_stale_readback=false;
-        std::puts("Valkyria: live graphics menu available (Insert / R3+L2), no frame-rate patches");
+        std::puts("Valkyria: live graphics menu available (Insert / R3+L2)");
         // Another internal resolution patches the game before the loader protects its code;
         // anything unexpected leaves this launch at 1920 x 1080.
         const int resolution = settings.startup_render_resolution;
@@ -243,6 +244,16 @@ extern "C" int ps4rtgpu_init(const Ps4RtGpuConfig* config) {
                 std::printf("Valkyria internal resolution: %dx%d unavailable (%s); running at 1920x1080\n",
                             width, height, problem.c_str());
                 Ps4RtSettings::CanvasUnavailable(problem.c_str());
+            }
+        }
+        // 60 updates a second (experimental, off unless chosen): the same all-or-nothing
+        // start; anything unexpected leaves this launch at the game's own 30.
+        if (settings.startup_sixty_fps) {
+            static std::string problem;
+            if (!ValkyriaFrameRate::Start(ValkyriaWidePatches::GuestBase, &problem)) {
+                std::printf("Valkyria 60 FPS (experimental): unavailable (%s); running at the game's 30\n",
+                            problem.c_str());
+                Ps4RtSettings::SixtyFpsUnavailable(problem.c_str());
             }
         }
     }

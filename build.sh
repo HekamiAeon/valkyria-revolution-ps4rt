@@ -80,13 +80,14 @@ echo "Built $PWD/out/ps4rt"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${portable_vulkan[@]}" "${vulkan_libraries[@]}" -o out/ps4rt-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    ninja -C out/gpu event-flag-test valkyria-camera-test valkyria-movie-test valkyria-ui-test valkyria-wide-ui-test valkyria-wide-patches-test upscaler-support-test graphics-settings-test menu-input-test achievements-test achievements-ui-test
+    ninja -C out/gpu event-flag-test valkyria-camera-test valkyria-movie-test valkyria-ui-test valkyria-wide-ui-test valkyria-wide-patches-test valkyria-frame-rate-test upscaler-support-test graphics-settings-test menu-input-test achievements-test achievements-ui-test
     out/gpu/event-flag-test
     out/gpu/valkyria-camera-test
     out/gpu/valkyria-movie-test
     out/gpu/valkyria-ui-test
     out/gpu/valkyria-wide-ui-test
     out/gpu/valkyria-wide-patches-test
+    out/gpu/valkyria-frame-rate-test
     out/gpu/upscaler-support-test
     out/gpu/graphics-settings-test
     out/gpu/menu-input-test
