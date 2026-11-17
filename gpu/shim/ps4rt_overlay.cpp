@@ -419,10 +419,15 @@ void ValkyriaGraphics() {
         ChoiceRow("Anisotropic filtering", s.anisotropy, anisotropy_labels,
                   Ps4RtGraphics::Anisotropies.data(), int(Ps4RtGraphics::Anisotropies.size()),
                   "Sharpens textures viewed at an angle. Works with FSR. Applies after restarting the game.");
-        CheckRow("60 FPS (experimental)", s.sixty_fps,
-                 "Runs the game at 60 frames a second instead of its original 30. Experimental: some "
-                 "animations or timings may still differ from the original. Switch it off to return to "
-                 "the original 30. Applies after restarting the game.");
+        // A list like the other ports' engine frame rate; the choice is the sixty_fps setting.
+        static const char* const rate_labels[] = {"30 (original)", "60 (experimental)"};
+        static constexpr int rate_values[] = {30, 60};
+        std::atomic<int> rate{s.sixty_fps ? 60 : 30};
+        ChoiceRow("Engine frame rate", rate, rate_labels, rate_values, 2,
+                  "The frame rate the game itself runs at. 60 is experimental: some animations or "
+                  "timings may still differ from the original. Choose 30 to return to the original. "
+                  "Applies after restarting the game.");
+        if ((rate == 60) != s.sixty_fps) s.sixty_fps = rate == 60;
         Row("Sharpening");
         int strength = s.sharpen ? int(s.sharpness * 100.0f + 0.5f) : 0;
         if (ImGui::SliderInt("##value", &strength, 0, 100, "%d%%")) {
@@ -512,7 +517,10 @@ void PerformanceTab() {
         static const char* const fps_labels[] = {"30", "60", "120", "240", "Unlimited"};
         ChoiceRow("Frame rate limit", s.fps_limit, fps_labels, G::FpsLimits.data(), int(G::FpsLimits.size()),
                   "Caps the frame rate. The engine frame rate (below) is the highest it can go.");
-        const int effective = G::EffectiveFps(s.fps_limit, s.applied_engine_fps);
+        // Valkyria runs at its original 30 unless this launch started the 60 FPS option.
+        const int engine_fps = !s.valkyria ? s.applied_engine_fps.load()
+                               : s.startup_sixty_fps && !s.sixty_fps_problem ? 60 : 30;
+        const int effective = G::EffectiveFps(s.fps_limit, engine_fps);
         if (s.fps_limit == 0 || effective < s.fps_limit) {
             char text[48];
             std::snprintf(text, sizeof(text), "%d FPS (engine frame rate)", effective);
