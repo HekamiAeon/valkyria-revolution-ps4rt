@@ -942,6 +942,180 @@ static void test_screen_picture(void) {
     ++test_update;use_canvas(3);
     puts("PASS: whole-screen pictures (the captured 1920x1080 BC1 flashback still; other 16:9 sizes, zoomed, mirrored, fading) keep the 16:9 screen between black bars on every wide canvas, with the vignette and glow drawn over them in the same update cut to it; later updates, earlier layers, other texture shapes and formats, other blending, partial UVs, unreadable textures, other callers and primitives, partial cover, off-screen layers and 16:9 canvases keep the full-width rules; input preserved");
 }
+/* Screen planes: a synthetic render context laid out as the two draw routines read it. */
+static unsigned char plane_context[0x2600],plane_buffer[0x20],plane_layout[0x40],plane_vertex_object[0x20],plane_index_object[0x20];
+static unsigned char plane_vertices[8*64];
+static float plane_block[984],plane_matrices[3][16];
+static struct {uintptr_t block;uint64_t writes;} plane_slots[4];
+static uint16_t plane_indices[16],plane_slot_map[2];
+static uint64_t plane_batch[4];
+#define PLANE_QUAD (plane_vertices+128) /* past the buffer offset (64) and one base vertex */
+static void plane_set(size_t at,const void *value,size_t size){memcpy(plane_context+at,value,size);}
+static void plane_scene(float px,float py) {
+    memset(plane_context,0,sizeof(plane_context));memset(plane_block,0,sizeof(plane_block));
+    memset(plane_vertices,0xa5,sizeof(plane_vertices));
+    uintptr_t p=(uintptr_t)plane_buffer;plane_set(0xb8,&p,8);
+    p=(uintptr_t)plane_slots;memcpy(plane_buffer+0x18,&p,8);plane_slots[1].block=(uintptr_t)plane_block;
+    uint32_t v=1;plane_set(0x2c,&v,4);plane_set(0x354,&v,4);
+    p=(uintptr_t)plane_layout;plane_set(0x1c8,&p,8);v=64;memcpy(plane_layout+0x10,&v,4);
+    p=(uintptr_t)plane_vertex_object;plane_set(0xc8,&p,8);plane_set(0x2d0,&v,4);
+    uint64_t range[2]={(uintptr_t)plane_vertices,sizeof(plane_vertices)};memcpy(plane_vertex_object+0x10,range,16);
+    p=(uintptr_t)plane_index_object;plane_set(0x2c8,&p,8);v=3;plane_set(0x350,&v,4);
+    p=(uintptr_t)plane_indices;memcpy(plane_index_object+0x10,&p,8);
+    const float corners[4][3]={{-0.5f,0.5f,0},{-0.5f,-0.5f,0},{0.5f,0.5f,0},{0.5f,-0.5f,0}};
+    for(unsigned i=0;i<4;++i)memcpy(PLANE_QUAD+i*64,corners[i],12);
+    const uint16_t strip[4]={0,1,2,3};memcpy(plane_indices+5,strip,sizeof(strip));
+    plane_batch[0]=1|UINT64_C(1)<<32;plane_batch[1]=4;plane_batch[2]=2|UINT64_C(1)<<32;plane_batch[3]=(uintptr_t)plane_slot_map;
+    plane_slot_map[0]=2;
+    plane_block[4]=px;plane_block[9]=py;plane_block[14]=-1;plane_block[15]=-1;plane_block[18]=-1;
+}
+/* The plane as captured: 1.92 x 1.08, 2.0 in front of the camera, with its rounding noise. */
+static void plane_place(float width,float height,float depth) {
+    const float m[16]={width,0,0,0, 0,height,-0.0004f,0, 0,0.0004f,1,0, 0.0092f,-0.0009f,-depth,1};
+    for(unsigned i=0;i<3;++i)memcpy(plane_matrices[i],m,sizeof(m));
+    plane_matrices[0][0]=plane_matrices[1][0]=77; /* other objects' matrices */
+    const float rows[12]={width,0,0,0.0092f, 0,height,0.0004f,-0.0009f, 0,-0.0004f,1,-depth};
+    memcpy(plane_block+44,rows,sizeof(rows));
+}
+static float recorded_matrix[16],recorded_rows[12];
+static const float *recorded_matrices;
+static unsigned mesh_calls,vertex_calls;
+__attribute__((used,noinline)) static uint64_t record_mesh(uintptr_t context,uintptr_t second,const uint64_t *batch,const float *matrices,uintptr_t fifth,uintptr_t sixth) {
+    assert(context==(uintptr_t)plane_context && second==0x22 && batch==plane_batch && fifth==0x55 && sixth==0x66);
+    memcpy(recorded_matrix,(const void*)((uintptr_t)matrices+(uintptr_t)plane_slot_map[0]*64),64);recorded_matrices=matrices;++mesh_calls;
+    return 0x1234;
+}
+__attribute__((naked,noinline)) static uint64_t fake_mesh(uintptr_t context __attribute__((unused)),uintptr_t second __attribute__((unused)),const uint64_t *batch __attribute__((unused)),const float *matrices __attribute__((unused)),uintptr_t fifth __attribute__((unused)),uintptr_t sixth __attribute__((unused))) {
+    __asm__ volatile("push %rbp; mov %rsp,%rbp; push %r15; push %r14; push %r13; push %r12; push %rbx; sub $104,%rsp; call record_mesh; add $104,%rsp; pop %rbx; pop %r12; pop %r13; pop %r14; pop %r15; pop %rbp; ret");
+}
+__attribute__((used,noinline)) static void record_vertex(uintptr_t context,uintptr_t vertices,uint64_t size) {
+    assert(context==(uintptr_t)plane_context && vertices && size);
+    memcpy(recorded_rows,plane_block+44,sizeof(recorded_rows));++vertex_calls;
+}
+__attribute__((naked,noinline)) static void fake_vertex(uintptr_t context __attribute__((unused)),uintptr_t vertices __attribute__((unused)),uint64_t size __attribute__((unused))) {
+    __asm__ volatile("push %rbp; mov %rsp,%rbp; push %r15; push %r14; push %r13; push %r12; push %rbx; sub $88,%rsp; call record_vertex; add $88,%rsp; pop %rbx; pop %r12; pop %r13; pop %r14; pop %r15; pop %rbp; ret");
+}
+/* Draws the scene through both paths; returns whether each drew the plane widened by `stretch`,
+   and checks that everything else, and all of the game's own data, is as the game left it. */
+static int plane_draws(float stretch) {
+    float matrices[3][16],block[984];unsigned char vertices[sizeof(plane_vertices)];
+    memcpy(matrices,plane_matrices,sizeof(matrices));memcpy(block,plane_block,sizeof(block));memcpy(vertices,plane_vertices,sizeof(vertices));
+    const float *m=plane_matrices[2];
+    unsigned before=mesh_calls;
+    assert(fake_mesh((uintptr_t)plane_context,0x22,plane_batch,plane_matrices[0],0x55,0x66)==0x1234 && mesh_calls==before+1);
+    assert(!memcmp(matrices,plane_matrices,sizeof(matrices)) && !memcmp(block,plane_block,sizeof(block)));
+    int mesh=recorded_matrices!=plane_matrices[0];
+    for(unsigned i=0;i<16;++i)assert(recorded_matrix[i]==(mesh && i%4==0 ? m[i]*stretch : m[i]));
+    before=vertex_calls;
+    fake_vertex((uintptr_t)plane_context,(uintptr_t)PLANE_QUAD,256);assert(vertex_calls==before+1);
+    assert(!memcmp(block,plane_block,sizeof(block)) && !memcmp(vertices,plane_vertices,sizeof(vertices)));
+    int primitive=recorded_rows[0]!=block[44];
+    for(unsigned i=0;i<12;++i)assert(recorded_rows[i]==(primitive && i<4 ? block[44+i]*stretch : block[44+i]));
+    assert(mesh==primitive);
+    return mesh;
+}
+static void test_screen_plane(void) {
+    size_t page=(size_t)sysconf(_SC_PAGESIZE);
+    uintptr_t mesh_page=(uintptr_t)fake_mesh&~(page-1),vertex_page=(uintptr_t)fake_vertex&~(page-1);
+    assert(!mprotect((void*)mesh_page,2*page,PROT_READ|PROT_WRITE|PROT_EXEC) && !mprotect((void*)vertex_page,2*page,PROT_READ|PROT_WRITE|PROT_EXEC));
+    unsigned char mesh_entry[PLANE_ENTRY],vertex_entry[PLANE_ENTRY];
+    memcpy(mesh_entry,(void*)fake_mesh,PLANE_ENTRY);memcpy(vertex_entry,(void*)fake_vertex,PLANE_ENTRY);
+    assert(!memcmp(mesh_entry,mesh_signature,PLANE_ENTRY) && !memcmp(vertex_entry,vertex_signature,PLANE_ENTRY));
+    /* Either signature off: neither routine is touched. */
+    for(unsigned which=0;which<2;++which) {
+        unsigned char *bad=(unsigned char*)(which ? (uintptr_t)fake_vertex : (uintptr_t)fake_mesh);
+        bad[16]^=1;
+        assert(install_planes((unsigned char*)(uintptr_t)fake_mesh,(unsigned char*)(uintptr_t)fake_vertex,2)==-1);
+        bad[16]^=1;
+        assert(!memcmp(mesh_entry,(void*)fake_mesh,PLANE_ENTRY) && !memcmp(vertex_entry,(void*)fake_vertex,PLANE_ENTRY) && plane_stretch==1);
+    }
+    assert(!install_planes((unsigned char*)(uintptr_t)fake_mesh,(unsigned char*)(uintptr_t)fake_vertex,2));
+    assert(memcmp(mesh_entry,(void*)fake_mesh,PLANE_ENTRY) && memcmp(vertex_entry,(void*)fake_vertex,PLANE_ENTRY) && plane_stretch==2);
+    assert(!mprotect((void*)mesh_page,2*page,PROT_READ|PROT_EXEC) && !mprotect((void*)vertex_page,2*page,PROT_READ|PROT_EXEC));
+    const float py=3.93772f;                               /* the captured scene's vertical scale */
+    for(unsigned k=0;k<CANVASES;++k) {
+        const float stretch=canvas_stretch(k),px=py*canvas_heights[k]/canvas_widths[k];
+        plane_stretch=stretch;
+        /* The captured plane, drawn as a strip and as two triangles: widened about the view axis,
+           and past both edges of the wide picture by its authored 6%. */
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        for(unsigned repeat=0;repeat<3;++repeat)assert(plane_draws(stretch));
+        assert((recorded_matrix[12]-0.5f*recorded_matrix[0])*px<-2.0012f*1.05f && (recorded_matrix[12]+0.5f*recorded_matrix[0])*px>2.0012f*1.05f);
+        const uint16_t list[6]={0,1,2,2,1,3};memcpy(plane_indices+5,list,sizeof(list));plane_batch[1]=6;
+        assert(plane_draws(stretch));
+        /* As the game draws most rigid models: a layout with vertex weights and a palette of one
+           matrix (the batch word as traced, 0x0004000100010001), at any palette slot. */
+        for(uint16_t palette_slot=0;palette_slot<4;palette_slot+=3) {
+            plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+            {uint32_t weights=1;plane_set(0x1ffc,&weights,4);}
+            plane_batch[0]=UINT64_C(0x0004000100010001);plane_slot_map[1]=palette_slot;
+            assert(plane_draws(stretch));
+        }
+        plane_slot_map[1]=0;
+        /* A weight bit of a stream the layout does not bind: the unweighted form. */
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        {uint32_t weights=2;plane_set(0x1ffc,&weights,4);}assert(plane_draws(stretch));
+        /* The same plane 2% past the frame, farther off, or on a narrower field of view. */
+        plane_scene(px,py);plane_place(1.02f*2*2.0012f/(py*9/16),1.02f*2*2.0012f/py,2.0012f);assert(plane_draws(stretch));
+        plane_scene(px,py);plane_place(19.2f,10.8f,20);assert(plane_draws(stretch));
+        plane_scene(px*2,py*2);plane_place(1.92f,1.08f,3.9f);assert(plane_draws(stretch));
+        /* Left alone: smaller than the frame, already past the wide picture, another shape, tilted,
+           off to one side, behind the camera. */
+        plane_scene(px,py);plane_place(1.6f,0.9f,2.0012f);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(2*2.0012f/(py*9/16),2*2.0012f/py,2.0012f);assert(!plane_draws(stretch)); /* a sliver short on one side */
+        plane_scene(px,py);plane_place(1.92f*stretch,1.08f*stretch,2.0012f);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(2.2f,2.2f,2.0012f);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.2f,2.0012f);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        for(unsigned i=0;i<3;++i){plane_matrices[i][2]=-1.92f*0.0872f;plane_matrices[i][8]=0.0872f;}
+        plane_block[46]=0.0872f;plane_block[52]=-1.92f*0.0872f;assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        for(unsigned i=0;i<3;++i)plane_matrices[i][12]=0.2f;
+        plane_block[47]=0.2f;assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,-2.0012f);assert(!plane_draws(stretch));
+        /* Not the scene's wide perspective projection: a 16:9 projection, a 2D one. */
+        plane_scene(py*9/16,py);plane_place(1.92f,1.08f,2.0012f);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);plane_block[18]=0;plane_block[19]=1;assert(!plane_draws(stretch));
+        /* Not four corners: a triangle of the quad, a folded quad, more vertices. */
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);memcpy(PLANE_QUAD+3*64,PLANE_QUAD,12);assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        {const float inside[3]={0.1f,-0.2f,0};memcpy(PLANE_QUAD+3*64,inside,12);}assert(!plane_draws(stretch));
+        /* Unreadable or implausible vertex data: drawn as the game asked, without a fault. */
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        {uint32_t stride=8;memcpy(plane_layout+0x10,&stride,4);}assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        {uintptr_t none=0;plane_set(0x1c8,&none,8);}assert(!plane_draws(stretch));
+        plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);
+        {uint32_t none=0;plane_set(0x354,&none,4);}assert(!plane_draws(stretch));
+    }
+    /* Each path's own exclusions on the widest canvas. */
+    const float stretch=canvas_stretch(4),px=py*canvas_heights[4]/canvas_widths[4];
+    plane_stretch=stretch;
+    #define MESH_ONLY(...) do{plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f);__VA_ARGS__; \
+        assert(fake_mesh((uintptr_t)plane_context,0x22,plane_batch,plane_matrices[0],0x55,0x66)==0x1234 && recorded_matrices==plane_matrices[0]);}while(0)
+    #define WEIGHTED(word) {uint32_t weights=1;plane_set(0x1ffc,&weights,4);plane_batch[0]=UINT64_C(word);}
+    MESH_ONLY(WEIGHTED(0x0000000100000001));               /* weighted, no palette entry copied */
+    MESH_ONLY(WEIGHTED(0x0004000100010002));               /* a palette of two */
+    MESH_ONLY(WEIGHTED(0x0004000100010000));               /* a palette of none */
+    MESH_ONLY(plane_batch[0]&=~UINT64_C(0xffff));          /* no matrix of its own */
+    MESH_ONLY(plane_batch[1]=12);
+    MESH_ONLY(plane_batch[1]=3);
+    MESH_ONLY(plane_indices[8]=4);                          /* a fifth vertex */
+    MESH_ONLY(plane_indices[8]=2);                          /* three of the four */
+    MESH_ONLY({uint64_t range[2]={(uintptr_t)plane_vertices,383};memcpy(plane_vertex_object+0x10,range,16);});
+    MESH_ONLY({uint64_t range[2]={0x10,sizeof(plane_vertices)};memcpy(plane_vertex_object+0x10,range,16);});
+    MESH_ONLY({uintptr_t unmapped=0x10;memcpy(plane_index_object+0x10,&unmapped,8);});
+    MESH_ONLY({uintptr_t none=0;plane_set(0x2c8,&none,8);});
+    #define PRIMITIVE_ONLY(vertices,size) do{plane_scene(px,py);plane_place(1.92f,1.08f,2.0012f); \
+        fake_vertex((uintptr_t)plane_context,(uintptr_t)(vertices),size);assert(recorded_rows[0]==1.92f && plane_block[44]==1.92f);}while(0)
+    PRIMITIVE_ONLY(PLANE_QUAD,320);                         /* five vertices */
+    PRIMITIVE_ONLY(PLANE_QUAD,192);
+    PRIMITIVE_ONLY(0x10,256);
+    /* A 16:9 canvas has no stretch: nothing is widened. */
+    plane_stretch=1;plane_scene(py*9/16,py);plane_place(1.92f,1.08f,2.0012f);assert(!plane_draws(1));
+    use_canvas(3);
+    puts("PASS: camera-attached screen planes (the captured 1.92x1.08 unit quad, as strip or triangles, at any depth and field of view) widen about the view axis past both edges on every wide canvas through the model draw path (unweighted layout, or weighted with a palette of one as traced) and the primitive draw path; smaller, wider, other-shaped, tilted, off-centre, hidden, 2D and 16:9-projected draws, weighted batches with a palette of two or none, bad vertex data and a 16:9 canvas untouched; game matrices, constants and vertices preserved; both hooks or neither, all arguments and the return value kept");
+}
 int main(void) {
     test_projection();
     size_t page=(size_t)sysconf(_SC_PAGESIZE);uintptr_t start=(uintptr_t)fake_guest&~(page-1);
@@ -1058,6 +1232,7 @@ int main(void) {
     test_paper_layer();
     test_talk_portrait();
     test_screen_picture();
+    test_screen_plane();
     puts("PASS: both native trampoline ABIs/all arguments, relocated colour global load, persistent input preservation, repeated glyphs without drift, scene-copy exclusion, full-width backgrounds/gradient, outer-edge shading, invalid-coordinate fallback");
     return 0;
 }

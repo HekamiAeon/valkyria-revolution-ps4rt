@@ -138,7 +138,8 @@ void TestWrites() {
     }
     // Clear of every canvas patch and of the UI hooks' prologues (valkyria_wide_ui.c).
     std::vector<std::pair<uint64_t, uint64_t>> taken = {
-        {0x764860, 0x764860 + 32}, {0x765750, 0x765750 + 32}, {0x235ce0, 0x235ce0 + 32}};
+        {0x764860, 0x764860 + 32}, {0x765750, 0x765750 + 32}, {0x235ce0, 0x235ce0 + 32},
+        {0x787fa0, 0x787fa0 + 32}, {0x769760, 0x769760 + 32}};
     for (auto [w, h] : {std::pair{2560, 1080}, {3440, 1440}, {3840, 1440}, {3840, 1080}, {5120, 1440},
                         {1024, 576}, {1280, 720}, {2560, 1440}, {3840, 2160}})
         for (const Write& write : ValkyriaWidePatches::Writes(w, h))

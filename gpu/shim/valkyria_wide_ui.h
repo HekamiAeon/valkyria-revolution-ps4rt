@@ -13,8 +13,8 @@ int valkyria_wide_ui_check(uintptr_t base);
 /// Installs the UI layout hooks for a width x height native canvas (a wide canvas, or another
 /// 16:9 size: 1024x576, 1280x720, 2560x1440, 3840x2160) into the game image at base, while
 /// its code is still writable (before the loader protects it). 0 on success; -1 changes
-/// nothing (unsupported size or a signature mismatch). The world-map cursor and narration
-/// paper patches are optional and reported when unavailable.
+/// nothing (unsupported size or a signature mismatch). The world-map cursor, narration paper,
+/// UI layer and screen plane patches are optional and reported when unavailable.
 int valkyria_wide_ui_install(uintptr_t base, unsigned width, unsigned height);
 
 #ifdef __cplusplus

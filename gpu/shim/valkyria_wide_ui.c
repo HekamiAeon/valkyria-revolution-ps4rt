@@ -7,7 +7,8 @@
    authored UI into the centred 16:9 area, widen full-screen layers to the whole width, keep
    whole-screen pictures at 16:9 between black bars and keep talk portraits at their stock
    texel scale; two
-   small code patches fix the world-map cursor and the narration paper. On a 16:9 canvas the
+   small code patches fix the world-map cursor and the narration paper, and hooks on the two
+   3D draw paths widen planes held in front of the camera to cover the picture. On a 16:9 canvas the
    margin is 0, so only the size-dependent parts act: full-screen copies drawn in stock pixels
    reach the native extent and the paper keeps its stock texel scale. Installed for an active
    native canvas (valkyria_wide_patches.h), after every signature matched. */
@@ -644,6 +645,165 @@ static int guest_matches(uintptr_t at,const unsigned char *expected,size_t size)
     struct iovec local={observed,size},remote={(void*)at,size};
     return process_vm_readv(getpid(),&local,1,&remote,1,0)==(ssize_t)size && !memcmp(observed,expected,size);
 }
+/* Camera-attached screen planes. An event can hold a flat model in front of the camera to tint
+   or dim the whole picture: observed as a unit quad (four 64-byte vertices at +-0.5) scaled to
+   1.92 x 1.08 and held 2.0 in front of the camera, 6% past the 16:9 frame on every side, drawn
+   alpha-blended in the transparent pass. On the wide projection it covered only the middle of
+   the picture and showed as a box. The rule is geometric, for every such plane: four vertices
+   that land in view space as one rectangle parallel to the screen, with the authored frame's
+   16:9 shape, covering the authored 16:9 frame on every side and ending inside the wide
+   picture, are widened about the view axis by the canvas stretch, so the plane overscans the
+   wide picture exactly as it did the authored one. Billboards and other models (another shape,
+   tilted, smaller than the frame or already past the wide picture) are left as they are.
+   rows: the world-view's x, y and z rows (view = row . (position, 1)); projection: the four
+   rows the game uploads, x scale, y scale, depth and w = -z. */
+static float plane_stretch=1;
+static int screen_plane(const float rows[3][4],const float positions[4][3],const float *projection,float stretch) {
+    const float px=projection[0],py=projection[5];
+    if(!(stretch>1.0001f) || !(px>0) || !(py>0) || !isfinite(px) || !isfinite(py))return 0;
+    /* The scene's perspective projection: nothing off its diagonal but w = -z. */
+    if(projection[1]!=0 || projection[3]!=0 || projection[4]!=0 || projection[7]!=0 ||
+       fabsf(projection[2])>0.01f || fabsf(projection[6])>0.01f ||
+       projection[12]!=0 || projection[13]!=0 || projection[14]!=-1 || projection[15]!=0)return 0;
+    const float authored=py*9.f/16.f;                 /* the x scale of the authored 16:9 frame */
+    if(fabsf(px*stretch-authored)>authored*0.002f)return 0;
+    float x[4],y[4],depth[4],min_x=INFINITY,max_x=-INFINITY,min_y=INFINITY,max_y=-INFINITY;
+    for(unsigned i=0;i<4;++i) {
+        const float *p=positions[i];
+        x[i]=rows[0][0]*p[0]+rows[0][1]*p[1]+rows[0][2]*p[2]+rows[0][3];
+        y[i]=rows[1][0]*p[0]+rows[1][1]*p[1]+rows[1][2]*p[2]+rows[1][3];
+        depth[i]=-(rows[2][0]*p[0]+rows[2][1]*p[1]+rows[2][2]*p[2]+rows[2][3]);
+        if(!isfinite(x[i]) || !isfinite(y[i]) || !isfinite(depth[i]) || !(depth[i]>0))return 0;
+        min_x=fminf(min_x,x[i]);max_x=fmaxf(max_x,x[i]);min_y=fminf(min_y,y[i]);max_y=fmaxf(max_y,y[i]);
+    }
+    const float width=max_x-min_x,height=max_y-min_y,d=depth[0];
+    if(!(width>0) || !(height>0) || fabsf(width*9.f-height*16.f)>height*16.f*0.01f)return 0;
+    unsigned corners=0;
+    for(unsigned i=0;i<4;++i) {
+        if(fabsf(depth[i]-d)>d*0.002f)return 0;
+        unsigned right,top;
+        if(fabsf(x[i]-min_x)<=width*0.002f)right=0;else if(fabsf(x[i]-max_x)<=width*0.002f)right=1;else return 0;
+        if(fabsf(y[i]-min_y)<=height*0.002f)top=0;else if(fabsf(y[i]-max_y)<=height*0.002f)top=1;else return 0;
+        corners|=1u<<(right+2*top);
+    }
+    if(corners!=15)return 0;
+    if(min_x*authored>-d*0.999f || max_x*authored<d*0.999f || min_y*py>-d*0.999f || max_y*py<d*0.999f)return 0;
+    return min_x*px>-d || max_x*px<d;
+}
+/* Four vertex positions, stride bytes apart (a position leads each vertex), read without
+   faulting. */
+static int plane_positions(uintptr_t first,uint32_t stride,float positions[4][3]) {
+    unsigned char data[3*256+12];
+    if(stride<12 || stride>256 || !guest_read(first,data,3*(size_t)stride+12))return 0;
+    for(unsigned i=0;i<4;++i)memcpy(positions[i],data+(size_t)i*stride,12);
+    return 1;
+}
+/* The draw constants of a render context (context+0xb8 -> per-thread slot context+0x2c): the
+   projection's rows at +0x10 and the draw's world-view rows at +0xb0, as both draw paths below
+   leave them for the vertex shader. */
+static float *draw_constants(uintptr_t context) {
+    const uintptr_t buffer=*(const uintptr_t*)(context+0xb8);
+    const uintptr_t slots=buffer ? *(const uintptr_t*)(buffer+0x18) : 0;
+    return slots ? *(float*const*)(slots+(uintptr_t)*(const uint32_t*)(context+0x2c)*0x10) : NULL;
+}
+/* Model batches, FUN_00787fa0(context, -, batch, matrices): copies world-view matrices, four
+   columns each, into the constants, then binds the layout (context+0x1c8, stride at +0x10),
+   the vertex buffer (context+0xc8: address +0x10, size +0x18; offset context+0x2d0; base
+   vertex batch[2]>>32) and the 16-bit indices (context+0x2c8 -> +0x10, from batch[2]'s low
+   half plus context+0x350; count batch[1]'s low word) and draws. batch[0]'s low word counts
+   the matrices and batch[3] names them: a layout without vertex weights (no bit of
+   context+0x1ffc for its streams) takes matrices[*batch[3]] as its world-view; a weighted
+   layout takes that many palette entries (source and palette slot, 16 bits each, when
+   batch[0]'s second word is set), which is how the game draws most rigid models too, with a
+   palette of one. With one entry every vertex of the batch goes through that matrix, so both
+   forms draw with the single matrix matrices[*batch[3]]. A plane's widened matrix is handed
+   over in place of the game's, which stays untouched. */
+typedef uint64_t (*MeshDraw)(uintptr_t,uintptr_t,const uint64_t*,const float*,uintptr_t,uintptr_t);
+static MeshDraw original_mesh_draw;
+static int mesh_plane(uintptr_t context,const uint64_t *batch,uint32_t indices,const float *matrix,float *widened) {
+    const float *constants=draw_constants(context);
+    const uintptr_t layout=*(const uintptr_t*)(context+0x1c8),vertices=*(const uintptr_t*)(context+0xc8),
+                    index_buffer=*(const uintptr_t*)(context+0x2c8);
+    if(!constants || !*(const uint32_t*)(context+0x354) || !layout || !vertices || !index_buffer)return 0;
+    const uint32_t stride=*(const uint32_t*)(layout+0x10);
+    uint64_t range[2];uintptr_t index_base=0;uint16_t index[6];
+    if(!guest_read(vertices+0x10,range,16) || !guest_read(index_buffer+0x10,&index_base,8) ||
+       !guest_read(index_base+2*((uint64_t)(uint32_t)batch[2]+*(const uint32_t*)(context+0x350)),index,indices*2))return 0;
+    unsigned used=0;
+    for(unsigned i=0;i<indices;++i) {if(index[i]>3)return 0;used|=1u<<index[i];}
+    const uint64_t offset=(uint64_t)*(const uint32_t*)(context+0x2d0)+(uint64_t)stride*(batch[2]>>32);
+    if(used!=15 || offset+4ull*stride>range[1])return 0;
+    float positions[4][3];
+    if(!plane_positions(range[0]+offset,stride,positions))return 0;
+    const float rows[3][4]={{matrix[0],matrix[4],matrix[8],matrix[12]},{matrix[1],matrix[5],matrix[9],matrix[13]},
+                            {matrix[2],matrix[6],matrix[10],matrix[14]}};
+    if(!screen_plane(rows,(const float(*)[3])positions,constants+4,plane_stretch))return 0;
+    memcpy(widened,matrix,64);
+    for(unsigned column=0;column<4;++column)widened[column*4]*=plane_stretch;
+    return 1;
+}
+static uint64_t mesh_draw(uintptr_t context,uintptr_t second,const uint64_t *batch,const float *matrices,uintptr_t fifth,uintptr_t sixth) {
+    const uint32_t indices=(uint16_t)batch[1];
+    float widened[16];
+    const uint32_t weighted=*(const uint32_t*)(context+0x1ffc)&((1u<<(*(const uint8_t*)(context+0x354)&0x1f))-1u);
+    if((indices==4 || indices==6) && matrices && batch[3] &&
+       (weighted ? (uint16_t)batch[0]==1 && (batch[0]&0xffff0000u) : (uint16_t)batch[0]!=0)) {
+        const uintptr_t slot=*(const uint16_t*)batch[3];
+        if(mesh_plane(context,batch,indices,matrices+slot*16,widened))
+            return original_mesh_draw(context,second,batch,(const float*)((uintptr_t)widened-slot*64),fifth,sixth);
+    }
+    return original_mesh_draw(context,second,batch,matrices,fifth,sixth);
+}
+/* Primitives with their own vertices, FUN_00769760(context, vertices, size): the primitive draw
+   (FUN_00763540, used by effects) has just written the primitive's world-view rows into the
+   constants and bound its layout; this binds size / stride vertices and uploads the constants.
+   A plane's x row is widened for the upload and put back after it. */
+typedef void (*VertexData)(uintptr_t,uintptr_t,uint64_t);
+static VertexData original_vertex_data;
+static void vertex_data(uintptr_t context,uintptr_t vertices,uint64_t size) {
+    float *constants=draw_constants(context);
+    const uintptr_t layout=*(const uintptr_t*)(context+0x1c8);
+    float positions[4][3];
+    if(constants && layout && *(const uint32_t*)(context+0x354) && size==4ull**(const uint32_t*)(layout+0x10) &&
+       plane_positions(vertices,*(const uint32_t*)(layout+0x10),positions)) {
+        float *world_view=constants+44,rows[3][4];
+        memcpy(rows,world_view,sizeof(rows));
+        if(screen_plane((const float(*)[4])rows,(const float(*)[3])positions,constants+4,plane_stretch)) {
+            for(unsigned column=0;column<4;++column)world_view[column]*=plane_stretch;
+            original_vertex_data(context,vertices,size);
+            memcpy(world_view,rows[0],sizeof(rows[0]));
+            return;
+        }
+    }
+    original_vertex_data(context,vertices,size);
+}
+#define PLANE_ENTRY 17u /* push rbp ; mov rbp,rsp ; push r15,r14,r13,r12,rbx ; sub rsp,imm8 */
+static const unsigned char mesh_signature[]={
+    0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x68,
+    0x48,0x8b,0x05,0xe0,0xf5,0x15,0x00,           /* mov rax,[rip+0x15f5e0] */
+    0x49,0x89,0xca,0x49,0x89,0xff};               /* mov r10,rcx ; mov r15,rdi */
+static const unsigned char vertex_signature[]={
+    0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x58,
+    0x4c,0x8b,0x35,0x20,0xde,0x17,0x00,           /* mov r14,[rip+0x17de20] */
+    0x48,0x89,0x55,0xb8,0x48,0x89,0x75,0xb0,      /* mov [rbp-0x48],rdx ; mov [rbp-0x50],rsi */
+    0x49,0x89,0xfc};                              /* mov r12,rdi */
+/* Both hooks or neither. RAX carries no argument into either routine and both load it (or
+   never read it) before use, so the entry jumps may use it. */
+static int install_planes(unsigned char *mesh,unsigned char *vertex,float stretch) {
+    if(memcmp(mesh,mesh_signature,PLANE_ENTRY) || memcmp(vertex,vertex_signature,PLANE_ENTRY))return -1;
+    size_t page=(size_t)sysconf(_SC_PAGESIZE);
+    unsigned char *code=mmap(NULL,page,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if(code==MAP_FAILED)return -1;
+    memcpy(code,mesh,PLANE_ENTRY);jump(code+PLANE_ENTRY,(uintptr_t)mesh+PLANE_ENTRY);
+    memcpy(code+64,vertex,PLANE_ENTRY);jump(code+64+PLANE_ENTRY,(uintptr_t)vertex+PLANE_ENTRY);
+    if(mprotect(code,page,PROT_READ|PROT_EXEC)) {munmap(code,page);return -1;}
+    original_mesh_draw=(MeshDraw)(void*)code;original_vertex_data=(VertexData)(void*)(code+64);
+    plane_stretch=stretch;
+    unsigned char replacement[PLANE_ENTRY];memset(replacement,0x90,sizeof(replacement));
+    jump(replacement,(uintptr_t)mesh_draw);memcpy(mesh,replacement,sizeof(replacement));
+    jump(replacement,(uintptr_t)vertex_data);memcpy(vertex,replacement,sizeof(replacement));
+    return 0;
+}
 static const unsigned char color_signature[]={0x41,0x57,0x41,0x56,0x53,0x4c,0x8b,0x0d,0xfc,0x93,0x2c,0,0x41,0x89,0xd2};
 int valkyria_wide_ui_check(uintptr_t base) {
     return guest_matches(base+0x764860,prologue,sizeof(prologue)) &&
@@ -675,5 +835,10 @@ int valkyria_wide_ui_install(uintptr_t base,unsigned width,unsigned height) {
         fputs("Valkyria wide canvas: narration paper signature unavailable; paper left at native texel scale\n",stderr);
     if(!guest_matches(base+0x2d30d0,layer_site,sizeof(layer_site)) || install_layer_scale((unsigned char*)(base+0x2d30d0),base))
         fputs("Valkyria wide canvas: UI layer signature unavailable; authored-size layers left native\n",stderr);
+    if(wide_canvas((float)width,(float)height) &&
+       (!guest_matches(base+0x787fa0,mesh_signature,sizeof(mesh_signature)) ||
+        !guest_matches(base+0x769760,vertex_signature,sizeof(vertex_signature)) ||
+        install_planes((unsigned char*)(base+0x787fa0),(unsigned char*)(base+0x769760),(float)width*9.f/((float)height*16.f))))
+        fputs("Valkyria wide canvas: model draw signatures unavailable; camera-attached screen planes left at 16:9\n",stderr);
     return 0;
 }
