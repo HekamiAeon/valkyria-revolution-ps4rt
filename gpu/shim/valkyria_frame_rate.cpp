@@ -16,7 +16,9 @@
 //   - times authored in frames, stored as frames x step and then run down by the step: frames
 //     x frame unit;
 //   - the whole authored frames in an update, taken by truncating its length: the length of
-//     two updates while an update is one tick.
+//     two updates while an update is one tick;
+//   - a motion's first frame, held for the one update that starts it: for the next update as
+//     well when that update is one tick.
 // With two or more ticks in an update (the shipped rate, or a slow update) every patched site
 // computes what the shipped code does.
 #include "valkyria_frame_rate.h"
@@ -65,6 +67,11 @@ Bytes Load(const char* opcode, uint64_t at, uint64_t from) {
 /// loop restart calls.
 constexpr uint64_t EffectHelper = 0x1798d1;
 
+/// The alignment bytes after two small functions next to the animation controller: the two
+/// halves of the helper its advance calls (13 and 11 of 14 bytes each).
+constexpr uint64_t MotionStartHelper = 0x16a422;
+constexpr uint64_t MotionHoldHelper = 0x16a442;
+
 /// call CameraHelper, the instruction at `at`.
 Bytes CallHelper(uint64_t at) {
     Bytes out{0xe8};
@@ -110,6 +117,48 @@ std::vector<Write> Writes() {
     // Animation controllers are created with a sampling interval of one shipped update
     // (1/29.97 s) and hold their pose between samples: one tick (1/59.94 s).
     add(0x16dc6e, Hex("86ab083d"), Hex("86ab883c"));
+
+    // A motion shows its first frame for the update that starts it, whatever that update's
+    // length (the controller's advance, FUN_00169860, passes no time to the clip while the
+    // clip is at 0 and the start result is 7). That is one authored frame as shipped and half
+    // of one at one tick, so a motion that is started again whenever it ends came round one
+    // tick early, and whatever is timed in ticks beside it was cut short: a ladder's slide
+    // loop moves the character one rung over each cycle and reached three quarters of it, so
+    // the slide ended above the ground and the landing snapped the rest. A motion started in
+    // a one-tick update holds its first frame for the next update too. The starting update's
+    // tick count is kept in the controller's padding at +0x74 (never initialised: anything
+    // but 1 means no hold, and a stray 1 costs one held update); the next update with the
+    // clip still at 0 takes it back. The site enters the helper with the flags of
+    // cmp dword [r13+0x60],7 and holds when it returns equal; xmm0 is still the 0 the clip
+    // time was compared with.
+    {
+        Bytes start = Hex("751e" // jne MotionHoldHelper    not started by this update
+                          "8b05"); // mov eax,[ticks]
+        Put32(start, Relative(MotionStartHelper + 8, Ticks));
+        Append(start, Hex("41894574" // mov [r13+0x74],eax
+                          "c3"));    // ret                 equal: hold, as shipped
+        add(MotionStartHelper, Bytes(start.size(), 0x90), start);
+        const Bytes hold = Hex("41837d7401" // cmp dword [r13+0x74],1    started a tick ago?
+                               "41c6457400" // mov byte [r13+0x74],0
+                               "c3");
+        add(MotionHoldHelper, Bytes(hold.size(), 0x90), hold);
+        const uint64_t at = 0x1698a1; // xmm1: the clip's time
+        const char* before = "c5f857c0"     // vxorps xmm0,xmm0,xmm0
+                             "c5fa114dc8"   // vmovss [rbp-0x38],xmm1
+                             "c5f82ec8"     // vucomiss xmm1,xmm0
+                             "770d"         // ja advance             past its first frame
+                             "41837d6007";  // cmp dword [r13+0x60],7
+        Bytes site = Hex(before);
+        site.push_back(0xe8); // call MotionStartHelper
+        Put32(site, Relative(at + site.size() + 4, MotionStartHelper));
+        Append(site, Hex("7406" // je 0x1698c2             hold: advance by xmm0 = 0
+                         "90"
+                         "c5fa1045d4")); // advance: vmovss xmm0,[rbp-0x2c]
+        Bytes shipped = Hex(before);
+        // jne advance ; vxorps xmm0,xmm0,xmm0 ; jmp 0x1698c2 ; advance: vmovss xmm0,[rbp-0x2c]
+        Append(shipped, Hex("7506" "c5f857c0" "eb05" "c5fa1045d4"));
+        add(at, shipped, site);
+    }
 
     // Head and eye turns take their time in authored frames from the step of the update that
     // starts them: the frame unit instead (vmovss xmm0,[step] -> [frame unit]).

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Valkyria 60 FPS startup patches on a synthetic image (no game data): well-formed writes that
 // stay clear of the canvas patches, all-or-nothing verification, the rewritten fragments
-// (event camera, mouth track, subtitle window, effect loop restart) executed at one and two
-// ticks an update, and the camera clip hooks on synthetic clips: a cut keeps its earlier frame.
+// (event camera, mouth track, subtitle window, effect loop restart, motion start) executed at
+// one and two ticks an update, and the camera clip hooks on synthetic clips: a cut keeps its
+// earlier frame.
 // Optional argument: a decrypted eboot.elf, checked read-only to match every patch's original
 // bytes.
 #include <sys/mman.h>
@@ -172,6 +173,13 @@ void TestStart() {
     const uint64_t restart = 0x17bcac, effect_helper = 0x1798d1;
     assert(image.data[restart + 4] == 0xe8 && restart + 9 + Disp(image, restart + 5) == effect_helper);
     assert(effect_helper + 7 + Disp(image, effect_helper + 2) == Ticks && image.data[effect_helper + 13] == 0xc3);
+    // The controller's advance calls the motion start helper, whose first half reads the tick
+    // count and leaves for the second.
+    const uint64_t motion = 0x1698b5, start_helper = 0x16a422, hold_helper = 0x16a442;
+    assert(image.data[motion] == 0xe8 && motion + 5 + Disp(image, motion + 1) == start_helper);
+    assert(image.data[start_helper] == 0x75 && start_helper + 2 + image.data[start_helper + 1] == hold_helper);
+    assert(start_helper + 8 + Disp(image, start_helper + 4) == Ticks && image.data[start_helper + 12] == 0xc3);
+    assert(image.data[hold_helper + 10] == 0xc3);
     // A second start finds its own bytes and changes nothing.
     assert(!Start(image.base(), &problem) && problem.rfind("game code differs at 0x", 0) == 0);
     for (const Write& write : Writes()) assert(HookSite(write) ? Hooked(image, write.at) : image.has(write, true));
@@ -387,6 +395,94 @@ void TestEffectLoop() {
     std::puts("PASS: a looping emitter starts over on the frame its loop ends, at one tick as at two");
 }
 
+/// The animation controller's advance (FUN_00169860) from its look at the clip's time to its
+/// call of the clip's advance, which the image has as a return: the time it passes on for an
+/// update `step` ticks long.
+float MotionAdvance(Image& image, uint32_t* controller, float time, float step) {
+    float locals[0x40 / 4] = {}; // the function's frame below rbp
+    const size_t kept_step = std::size(locals) - 0x2c / 4, kept_time = std::size(locals) - 0x38 / 4;
+    locals[kept_step] = step;
+    Regs regs{};
+    regs.xmm0 = -7;
+    regs.xmm1 = time;
+    regs.r13 = reinterpret_cast<uint64_t>(controller);
+    regs.rbp = reinterpret_cast<uint64_t>(std::end(locals));
+    valkyria_enter(image.data + 0x1698a1, &regs);
+    for (size_t i = 0; i < std::size(locals); ++i)
+        assert(locals[i] == (i == kept_step ? step : i == kept_time ? time : 0));
+    assert(regs.xmm1 == time && regs.r13 == reinterpret_cast<uint64_t>(controller));
+    return regs.xmm0;
+}
+
+void TestMotionStart() {
+    constexpr size_t Result = 0x60 / 4, Kept = 0x74 / 4; // the start result; the padding
+    Image image, stock;
+    Patched(image);
+    Stock(stock);
+    for (Image* game : {&image, &stock}) game->put(0x1698c2, {0xc3}); // the clip's advance
+    uint32_t controller[0x80 / 4] = {};
+    const auto advance = [&](uint32_t result, float time, float step) {
+        controller[Result] = result;
+        const float passed = MotionAdvance(image, controller, time, step);
+        for (size_t i = 0; i < std::size(controller); ++i)
+            assert(i == Kept || controller[i] == (i == Result ? result : 0));
+        return passed;
+    };
+    // Two ticks, as shipped: nothing passes on the update that starts a motion at 0, and on
+    // that update only. Whatever the padding held does not matter.
+    image.u(Ticks) = 2;
+    for (uint32_t junk : {0u, 0x10u, 0x3f800000u, 0x101u, 0xffffffffu}) {
+        controller[Kept] = junk;
+        assert(advance(7, 0, 2) == 0 && advance(0, 0, 2) == 2 && advance(0, 0, 2) == 2);
+        controller[Kept] = junk;
+        assert(advance(0, 0, 2) == 2 && advance(1, 0, 2) == 2 && advance(6, 0, 2) == 2);
+        assert(advance(7, 5, 2) == 2 && advance(0, 5, 2) == 2 && advance(7, -1, 2) == 0);
+    }
+    // One tick: the update after the start holds the first frame too, once.
+    image.u(Ticks) = 1;
+    for (uint32_t junk : {0u, 0x10u, 0x3f800000u, 0x101u, 0xffffffffu}) {
+        controller[Kept] = junk;
+        assert(advance(0, 0, 1) == 1 && advance(0, 0, 1) == 1);
+        assert(advance(7, 0, 1) == 0 && advance(0, 0, 1) == 0 && advance(0, 0, 1) == 1 && advance(0, 1, 1) == 1);
+        assert(advance(7, 0, 1) == 0 && advance(7, 0, 1) == 0 && advance(0, 0, 1) == 0 && advance(0, 0, 1) == 1);
+        controller[Kept] = junk;
+        assert(advance(7, 5, 1) == 1 && advance(0, 5, 1) == 1 && advance(0, 0, 1) == 1);
+    }
+    // A start in a slow update is a whole first frame already.
+    image.u(Ticks) = 3;
+    assert(advance(7, 0, 3) == 0);
+    image.u(Ticks) = 1;
+    assert(advance(0, 0, 1) == 1);
+    // A stray 1 in the padding costs one held update.
+    controller[Kept] = 1;
+    assert(advance(0, 0, 1) == 0 && advance(0, 0, 1) == 1);
+    // A motion `length` ticks long that is started again on the update after it reaches its
+    // end, as the ladder loops are (2 and 38 ticks): the ticks from one start to the next.
+    const auto cycle = [&](Image& game, uint32_t ticks, float length) {
+        game.u(Ticks) = ticks;
+        uint32_t state[0x80 / 4] = {};
+        float time = length;
+        int last = -1, period = 0;
+        for (int update = 0; update < 400; ++update) {
+            const bool start = time >= length;
+            if (start) {
+                assert(last < 0 || !period || period == int((update - last) * ticks));
+                if (last >= 0) period = int((update - last) * ticks);
+                time = 0, last = update;
+            }
+            state[Result] = start ? 7 : 0;
+            time += MotionAdvance(game, state, time, float(ticks));
+        }
+        return period;
+    };
+    for (float length : {2.f, 38.f, 60.f}) {
+        assert(cycle(image, 2, length) == length + 2 && cycle(image, 1, length) == length + 2);
+        // The shipped code: right at two ticks, a tick early at one.
+        assert(cycle(stock, 2, length) == length + 2 && cycle(stock, 1, length) == length + 1);
+    }
+    std::puts("PASS: a motion holds its first frame for one authored frame at one tick as at two; a loop comes round on time");
+}
+
 using Pose = std::array<float, ValkyriaCameraCuts::PoseSize>;
 
 Pose Shot(float px, float py, float pz, float tx, float ty, float tz, float roll = 0) {
@@ -566,6 +662,7 @@ int main(int argc, char** argv) {
     TestMouthTrack();
     TestSubtitleWindow();
     TestEffectLoop();
+    TestMotionStart();
     TestCutRules();
     TestCameraHooks();
     if (argc > 1) {
