@@ -289,12 +289,16 @@ static int install_layer_scale(unsigned char *site,uintptr_t base) {
     memcpy(site,replacement,sizeof(replacement));
     return 0;
 }
-/* Event world map (observed in the Jutland briefing: one 4096x2048 authored quad through
-   0x229a9e at -2112..1984 x -958..1090, full UVs, opaque white vertex colour, z -10). Its
-   art ends just past the 16:9 edge on the side it is scrolled toward, so the live 3D room
-   behind it shows in the wide margins. Return the authored window, centred on the 16:9
-   screen, that the map covers on both sides (at least 16:9). A map covering the whole
-   wide canvas needs no bars. */
+/* Event world map: one 4096x2048 authored quad through 0x229a9e, full UVs, opaque white
+   vertex colour, z -10 (observed at -2112..1984 x -958..1090 in the Jutland briefing and at
+   -1851..2245 x -719..1329 in a later event). The screen is 16:9 art: straight after the map
+   the game draws its frame, a vignette of four mirrored 1024x563.2 quadrants covering
+   -64..1984 x -19.2..1107.2, and the map scrolls beneath it, between -64 and 1984 at its two
+   ends. Past the map's own edge the live 3D room shows in the wide margins, and between the
+   frame and that edge the unframed map does. Return the authored window, centred on the 16:9
+   screen, that stays visible: the frame's extent wherever the map is scrolled, so the bars
+   never move with it (less, down to 16:9, if the map itself ends sooner). */
+#define EVENT_FRAME_HALF 1024.f
 static int event_map_window(const unsigned char *input,uint32_t count,uint32_t primitive,
                             float min_x,float max_x,float min_y,float max_y,float canvas_dx,
                             float *left,float *right) {
@@ -308,8 +312,8 @@ static int event_map_window(const unsigned char *input,uint32_t count,uint32_t p
         corners|=1u<<(hx+2*hy);
     }
     if(corners!=15 || min_y>0 || max_y<1080)return 0;
-    float half=fminf(960-min_x,max_x-960);
-    if(!(half>=960) || half>=960+canvas_dx)return 0;
+    float half=fminf(fminf(960-min_x,max_x-960),EVENT_FRAME_HALF);
+    if(!(half>=960) || half>=960+canvas_dx)return 0; /* short of 16:9, or no margin to cover */
     *left=960-half;*right=960+half;
     return 1;
 }

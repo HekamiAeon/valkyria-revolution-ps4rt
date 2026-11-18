@@ -286,7 +286,7 @@ static void test_cursor_site(void) {
     munmap(code,page);
     puts("PASS: world-map cursor node cancels only the canvas translation (the authored margin on every wide canvas, 0 at 16:9); cursor state, Y and Z write untouched; signature rejection");
 }
-/* Live vertex dump of the Jutland event map: x,y,z,RGBA,u,v per vertex. */
+/* Live vertex dump of the event map (Jutland briefing): x,y,z,RGBA,u,v per vertex. */
 static void event_map_quad(unsigned char *source,float min_x,float min_y) {
     const float xs[]={min_x+4096,min_x+4096,min_x,min_x},ys[]={min_y,min_y+2048,min_y,min_y+2048};
     memset(source,0xa5,4*24+16);
@@ -306,9 +306,12 @@ static void test_event_map(void) {
     test_caller=0x229a9e;test_stride=24;test_offscreen=0;
     for(unsigned mode=0;mode<CANVASES;++mode){
         test_project_width=widths[mode];test_project_height=heights[mode];test_project_scale=heights[mode]/1080.f;
-        /* Observed: scrolled to its right end; then the same map scrolled to its left end. */
-        const float starts[]={-2112,-64};
-        for(unsigned s=0;s<2;++s){
+        /* Observed: scrolled to its right end; the same map scrolled to its left end; a later
+           event's position between them (-1851..2245, logged at 3840x1440: its own edge would
+           put the seams at 847/4273 instead of the frame's 1195/3925); and a map covering the
+           whole wide canvas. The bars stay at the frame's edges (-64..1984) in all of them. */
+        const float starts[]={-2112,-64,-1851,-1100};
+        for(unsigned s=0;s<4;++s){
             event_map_quad(source,starts[s],-958);memcpy(saved,source,sizeof(source));
             submit_log_count=0;invoke_strip(source);assert(!memcmp(source,saved,sizeof(source)));
             assert(submit_log_count==3);
@@ -325,16 +328,19 @@ static void test_event_map(void) {
                 assert(v[12]==0 && v[13]==0 && v[14]==0 && v[15]==0xff);
                 assert(read_float(v+16)==0.5f && read_float(v+20)==0.5f);
             }
-            /* Physical seams match the map's own edges on screen (1195/3925 at 5120x1440). */
+            /* Physical seams match the frame's edges on screen (1195/3925 at 5120x1440). */
             assert(fabsf((map_dx-64)*test_project_scale-(widths[mode]-2048*test_project_scale)/2)<0.01f);
         }
         /* Bars fade with the map: alpha is kept, RGB zeroed. */
         event_map_quad(source,-2112,-958);for(unsigned i=0;i<4;++i)source[i*24+15]=0x40;
         submit_log_count=0;invoke_strip(source);assert(submit_log_count==3 && submit_log[1][15]==0x40 && submit_log[2][12]==0);
-        /* No bars: map covering the whole wide canvas, short of 16:9, partial height,
-           partial UVs, other sizes, other callers, off-screen layers, 16:9 output. */
-        event_map_quad(source,-1100,-958);submit_log_count=0;invoke_strip(source);assert(submit_log_count==1);
+        /* A map that ends inside the frame is barred at its own edge, down to 16:9. */
+        event_map_quad(source,-32,-958);submit_log_count=0;invoke_strip(source);assert(submit_log_count==3);
+        assert(fabsf(read_float(submit_log[1])-(canvas_dx(mode)-32))<0.01f && fabsf(read_float(submit_log[2]+48)-(canvas_dx(mode)+1952))<0.01f);
         event_map_quad(source,0,-958);submit_log_count=0;invoke_strip(source);assert(submit_log_count==3);
+        assert(fabsf(read_float(submit_log[1])-canvas_dx(mode))<0.01f && fabsf(read_float(submit_log[2]+48)-(canvas_dx(mode)+1920))<0.01f);
+        /* No bars: short of 16:9, partial height, partial UVs, other sizes, other callers,
+           off-screen layers, 16:9 output. */
         event_map_quad(source,1920-4096-40,-958);submit_log_count=0;invoke_strip(source);assert(submit_log_count==1);
         event_map_quad(source,-2112,100);submit_log_count=0;invoke_strip(source);assert(submit_log_count==1);
         event_map_quad(source,-2112,-958);write_float(source+16,0.5f);submit_log_count=0;invoke_strip(source);assert(submit_log_count==1);
@@ -346,7 +352,7 @@ static void test_event_map(void) {
     test_project_width=1920;test_project_height=1080;test_project_scale=1;
     event_map_quad(source,-2112,-958);submit_log_count=0;invoke_strip(source);assert(submit_log_count==1 && !memcmp(captured,source,96));
     test_project_width=3840;test_project_height=1080;test_project_scale=1;
-    puts("PASS: event map bars outside the map's symmetric window right after the map (seams at its edges, alpha kept, Y/Z preserved, input untouched) on every wide canvas; full-cover/short/partial/other-caller/off-screen/16:9 exclusions");
+    puts("PASS: event map bars outside its frame right after the map at every scroll position (seams at the frame's edges, alpha kept, Y/Z preserved, input untouched) on every wide canvas; a map ending inside the frame barred at its own edge; short/partial/other-caller/off-screen/16:9 exclusions");
 }
 static void centred_quad(unsigned char *source,float x0,float y0,float y1,float u0,float u1) {
     memset(source,0x5c,4*24+16);
