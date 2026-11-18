@@ -4,8 +4,9 @@
    another 16:9 size. The game draws its UI in authored 1920x1080 units that its GUI root
    scales by height/1080, so on a wider screen the UI would hug the left edge. Hooks on the
    textured (0x764860) and solid (0x765750) UI submits and the UI projection (0x235ce0) move
-   authored UI into the centred 16:9 area, widen full-screen layers to the whole width and keep
-   talk portraits at their stock texel scale; two
+   authored UI into the centred 16:9 area, widen full-screen layers to the whole width, keep
+   whole-screen pictures at 16:9 between black bars and keep talk portraits at their stock
+   texel scale; two
    small code patches fix the world-map cursor and the narration paper. On a 16:9 canvas the
    margin is 0, so only the size-dependent parts act: full-screen copies drawn in stock pixels
    reach the native extent and the paper keeps its stock texel scale. Installed for an active
@@ -107,6 +108,11 @@ static uintptr_t test_caller;
 #endif
 static float read_float(const unsigned char *p) { float value;memcpy(&value,p,4);return value; }
 static void write_float(unsigned char *p,float value) { memcpy(p,&value,4); }
+/* Reads guest memory without faulting: an address that is not what it is taken for fails closed. */
+static int guest_read(uintptr_t at,void *out,size_t size) {
+    struct iovec local={out,size},remote={(void*)at,size};
+    return at && process_vm_readv(getpid(),&local,1,&remote,1,0)==(ssize_t)size;
+}
 /* Glyph coordinates are local to an affine text matrix. Translate in the
    canvas's horizontal direction, not the rotated/scaled local X direction. */
 static int glyph_canvas_delta(uintptr_t descriptor,float margin,float *dx,float *dy) {
@@ -342,6 +348,70 @@ static int talk_portrait(const unsigned char *input,uint32_t count,float span_x,
     }
     return corners==15;
 }
+/* Whole-screen pictures: an event can show a still over the whole screen, as in a flashback
+   (observed: one quad through 0x229a9e at 0..1920 x 0..1088 with the whole texture, opaque
+   white, normal blending, a 1920x1080 BC1 texture; then a pulsing 256x256 vignette at
+   -49.5..1969.5 and an additive 1024x1024 glow at -5..1925 over it). It is drawn for the 16:9
+   screen and hides all of it, so widening it only distorts it. A quad's texture is reached from
+   its draw group, the submit's first argument (FUN_00749050): group+0x50 is the texture handle,
+   handle+8 the texture, and the GNM descriptor words at texture+0x10 give the format (word 1,
+   bits 20..25; 35 is BC1) and the size less one (word 2, 14 bits each). A whole opaque (BC1)
+   texture in the screen's 16:9 shape, drawn with normal blending (group+0x20 is 3) over the
+   whole 16:9 screen, is such a picture. No power-of-two texture has that shape, which leaves
+   tints, vignettes, the narration paper and the tall illustrated backdrops (2048x2048) to the
+   full-width rules. */
+static int screen_picture(uintptr_t group,const unsigned char *input,uint32_t count,
+                          float min_x,float max_x,float min_y,float max_y) {
+    if(count!=4 || min_x>2 || max_x<1918 || min_y>2 || max_y<1078)return 0;
+    unsigned corners=0,whole=0;
+    for(uint32_t i=0;i<4;++i){
+        const unsigned char *v=input+i*24;
+        float x=read_float(v),y=read_float(v+4),u=read_float(v+16),t=read_float(v+20);
+        int hx=fabsf(x-max_x)<=0.1f,hy=fabsf(y-max_y)<=0.1f;
+        if((!hx && fabsf(x-min_x)>0.1f) || (!hy && fabsf(y-min_y)>0.1f) || (u!=0 && u!=1) || (t!=0 && t!=1))return 0;
+        corners|=1u<<(hx+2*hy);whole|=1u<<((u!=0)+2*(t!=0));
+    }
+    uint32_t blend,words[2];uintptr_t handle,texture;
+    if(corners!=15 || whole!=15 || !guest_read(group+0x20,&blend,4) || blend!=3 ||
+       !guest_read(group+0x50,&handle,8) || !guest_read(handle+8,&texture,8) ||
+       !guest_read(texture+0x14,words,8))return 0;
+    const uint32_t width=(words[1]&0x3fff)+1,height=(words[1]>>14&0x3fff)+1;
+    return (words[0]>>20&0x3f)==35 && width*9==height*16;
+}
+/* Which update a draw belongs to: the frame-end time the clock stores once an update
+   (FUN_003d47f0, timing state [0xa12be8] + 0x20). 0 until the clock runs. */
+#ifdef VALKYRIA_WIDE_UI_TEST
+static uint64_t test_update=1;
+#endif
+static uint64_t update_stamp(void) {
+#ifdef VALKYRIA_WIDE_UI_TEST
+    return test_update;
+#else
+    const uintptr_t timing=*(const uintptr_t*)(guest_base+0xa12be8);
+    return timing ? *(const uint64_t*)(timing+0x20) : 0;
+#endif
+}
+static uint64_t picture_update;
+/* Cuts a screen-covering quad to the authored 16:9 screen across, as that screen's edge does: a
+   corner past the edge moves onto it and takes the colour and UVs found there on the way to its
+   neighbour along x. */
+static void crop_to_screen(unsigned char *out,const unsigned char *input) {
+    for(unsigned i=0;i<4;++i){
+        const unsigned char *v=input+i*24;
+        const float x=read_float(v),inside=fminf(fmaxf(x,0),1920);
+        if(inside==x)continue;
+        for(unsigned j=0;j<4;++j){
+            const unsigned char *n=input+j*24;
+            const float nx=read_float(n);
+            if(fabsf(read_float(n+4)-read_float(v+4))>0.1f || fabsf(nx-x)<=0.1f)continue;
+            const float t=(inside-x)/(nx-x);
+            write_float(out+i*24,inside);
+            for(unsigned c=12;c<16;++c)out[i*24+c]=(unsigned char)lrintf((float)v[c]+((float)n[c]-(float)v[c])*t);
+            for(unsigned c=16;c<24;c+=4)write_float(out+i*24+c,read_float(v+c)+(read_float(n+c)-read_float(v+c))*t);
+            break;
+        }
+    }
+}
 static void canvas_forward(uintptr_t context,const void *vertices,uint32_t count,uint32_t primitive,uintptr_t descriptor,uintptr_t caller,int color) {
     Submit forward=color?original_color_submit:original_submit;
     size_t stride=color?16:24;
@@ -465,6 +535,16 @@ static void canvas_forward(uintptr_t context,const void *vertices,uint32_t count
                (fabsf(y-min_y)>0.1f && fabsf(y-max_y)>0.1f))background=0;
         }
     }
+    /* A whole-screen picture keeps the 16:9 screen it was drawn for, and so do the full-screen
+       layers drawn over it in the same update (its vignette and glow): cut to that screen and
+       placed as authored UI instead of widened. */
+    int picture=0;
+    if(!color && caller==0x229a9e){
+        const uint64_t update=update_stamp();
+        picture=primitive==4 && screen_picture(context,input,count,min_x,max_x,min_y,max_y);
+        if(picture)picture_update=update;
+        if(picture || (background && update && update==picture_update)){crop_to_screen(scratch,input);background=0;}
+    }
     for(uint32_t i=0;i<count;++i) {
         float x=read_float(scratch+i*stride);
         write_float(scratch+i*stride,background ? x*ui.stretch : (edge && x<0) || side<0 ? x : side>0 ? x+2*canvas_dx : x+canvas_dx);
@@ -481,12 +561,13 @@ static void canvas_forward(uintptr_t context,const void *vertices,uint32_t count
             write_float(scratch+i*stride+16,.5f+(read_float(input+i*stride+16)-.5f)/ui.stretch);
     float bar_left,bar_right;
     int bars=!color && caller==0x229a9e && event_map_window(input,count,primitive,min_x,max_x,min_y,max_y,canvas_dx,&bar_left,&bar_right);
+    if(picture){bars=1;bar_left=0;bar_right=1920;}
     forward(context,scratch,count,primitive,descriptor);
     if(bars){
-        /* Right after the map, so later UI (vignette, text, dialogs) still draws on top:
-           the same quad, state and depth, with one central map texel and RGB zeroed. The
+        /* Right after the map or picture, so later UI (vignette, text, dialogs) still draws
+           on top: the same quad, state and depth, with one central texel and RGB zeroed. The
            alpha byte (high byte, as in the engine's 0xff000000|rgb colours) is kept so the
-           bars fade with the map. Spans reach a little past the canvas edges. */
+           bars fade with it. Spans reach a little past the canvas edges. */
         const float spans[2][2]={{-canvas_dx-8,bar_left},{bar_right,1920+canvas_dx+8}};
         for(unsigned b=0;b<2;++b){
             memcpy(scratch,vertices,bytes);

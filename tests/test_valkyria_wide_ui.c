@@ -763,6 +763,185 @@ static void test_talk_portrait(void) {
     use_canvas(3);
     puts("PASS: talk portraits sample their half-screen face target 1:1 and centred on every wide canvas (both panels, mirrored UVs), positions shifted as authored UI, V/colour/depth/input preserved; atlas frame/proportion/UV/caller/off-screen exclusions; 16:9 sizes untouched");
 }
+/* A draw group as the submit's first argument: blending at +0x20, texture handle at +0x50,
+   the texture at handle+8 and its GNM descriptor words at texture+0x10. */
+static unsigned char picture_group[0x80],picture_handle[0x30],picture_texture[0x90];
+#define BC1_WORD 0x02300000u /* descriptor word 1 of the observed picture: format 35 */
+static uint32_t size_word(uint32_t width,uint32_t height){return 0x70000000u|(height-1)<<14|(width-1);}
+static void picture_scene(uint32_t word1,uint32_t word2,uint32_t blend) {
+    const uintptr_t handle=(uintptr_t)picture_handle,texture=(uintptr_t)picture_texture;
+    const uint32_t flags[2]={0x88000000u,0x38},words[4]={0x10f5111d,word1,word2,0x94d00fac};
+    memset(picture_group,0,sizeof(picture_group));memset(picture_handle,0,sizeof(picture_handle));memset(picture_texture,0,sizeof(picture_texture));
+    memcpy(picture_group+0x20,&blend,4);memcpy(picture_group+0x50,&handle,8);
+    memcpy(picture_handle,flags,8);memcpy(picture_handle+8,&texture,8);memcpy(picture_texture+0x10,words,16);
+}
+/* Live vertex order of the flashback picture and its overlays: right top, right bottom, left
+   top, left bottom; z -10. */
+static void picture_quad(unsigned char *source,float x0,float x1,float y0,float y1,float u0,float u1,unsigned char alpha) {
+    memset(source,0x3c,4*24+16);
+    for(unsigned i=0;i<4;++i){
+        unsigned char *v=source+i*24;int hx=i<2,hy=i&1;
+        write_float(v,hx?x1:x0);write_float(v+4,hy?y1:y0);write_float(v+8,-10);
+        v[12]=0xff;v[13]=0xff;v[14]=0xff;v[15]=alpha;
+        write_float(v+16,hx?u1:u0);write_float(v+20,hy?1:0);
+    }
+}
+static void invoke_group(unsigned char *source,uint32_t primitive) {
+    fake_guest((uintptr_t)picture_group,source,4,primitive,(uintptr_t)invoke_matrix);
+    assert(captured_context==(uintptr_t)picture_group && captured_count==4 && captured_primitive==primitive && captured_descriptor==(uintptr_t)invoke_matrix);
+}
+/* One forward, every corner widened by the canvas stretch: the full-width rule as before. */
+static void expect_widened(unsigned char *source,unsigned mode) {
+    unsigned char saved[4*24+16];memcpy(saved,source,sizeof(saved));
+    submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && !memcmp(source,saved,sizeof(saved)));
+    for(unsigned i=0;i<4;++i){
+        assert(close_to(read_float(captured+i*24),read_float(source+i*24)*canvas_stretch(mode)));
+        assert(!memcmp(captured+i*24+4,source+i*24+4,20));
+    }
+}
+/* The picture inside the 16:9 screen (cut to it if it is larger) and a black bar on each side. */
+static void expect_picture(unsigned char *source,unsigned mode,float x0,float x1,unsigned char alpha) {
+    unsigned char saved[4*24+16];memcpy(saved,source,sizeof(saved));
+    const float dx=canvas_dx(mode),left=x0<0?0:x0,right=x1>1920?1920:x1;
+    submit_log_count=0;invoke_group(source,4);assert(submit_log_count==3 && !memcmp(source,saved,sizeof(saved)));
+    for(unsigned i=0;i<4;++i){
+        const unsigned char *v=submit_log[0]+i*24;int hx=i<2;
+        assert(close_to(read_float(v),(hx?right:left)+dx));
+        assert(!memcmp(v+4,source+i*24+4,12));
+        assert(fabsf(read_float(v+16)-((hx?right:left)-x0)/(x1-x0))<0.00001f && read_float(v+20)==read_float(source+i*24+20));
+    }
+    const float expect[2][2]={{-8,dx},{dx+1920,1928+2*dx}};
+    for(unsigned b=0;b<2;++b)for(unsigned i=0;i<4;++i){
+        const unsigned char *v=submit_log[1+b]+i*24;
+        assert(close_to(read_float(v),expect[b][i<2]));
+        assert(!memcmp(v+4,source+i*24+4,8));
+        assert(v[12]==0 && v[13]==0 && v[14]==0 && v[15]==alpha);
+        assert(read_float(v+16)==0.5f && read_float(v+20)==0.5f);
+    }
+    /* On screen: the picture is the 16:9 of the canvas height, centred, the bars reach its edges. */
+    assert(fabsf((dx+1920)*test_project_scale-dx*test_project_scale-test_project_height*16/9)<0.01f);
+    assert(fabsf(dx*test_project_scale*2+test_project_height*16/9-test_project_width)<0.01f);
+}
+static void test_screen_picture(void) {
+    unsigned char source[4*24+16],saved[sizeof(source)];
+    test_caller=0x229a9e;test_stride=24;test_offscreen=0;
+    for(unsigned mode=0;mode<CANVASES;++mode){
+        use_canvas(mode);
+        const float dx=canvas_dx(mode);
+        /* Observed: the 1920x1080 BC1 flashback picture at 0..1920 x 0..1088, then its vignette
+           (256x256) at -49.5..1969.5 x -14.5..1102.5 and its additive glow (1024x1024, an
+           atlas span) at -5..1925 x -17..1105 in the same update. */
+        ++test_update;
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,0,1920,0,1088,0,1,0xff);expect_picture(source,mode,0,1920,0xff);
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-49.5f,1969.5f,-14.5f,1102.5f,0,1,0xff);memcpy(saved,source,sizeof(source));
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && !memcmp(source,saved,sizeof(source)));
+        for(unsigned i=0;i<4;++i){
+            int hx=i<2;
+            assert(close_to(read_float(captured+i*24),(hx?1920:0)+dx));
+            assert(!memcmp(captured+i*24+4,source+i*24+4,12));
+            assert(fabsf(read_float(captured+i*24+16)-(hx?1969.5f:49.5f)/2019)<0.00001f && read_float(captured+i*24+20)==(float)(i&1));
+        }
+        picture_scene(0x00a00000,size_word(1024,1024),4);
+        picture_quad(source,-5,1925,-17,1105,.25f,.75f,0x80);
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1);
+        for(unsigned i=0;i<4;++i){
+            int hx=i<2;
+            assert(close_to(read_float(captured+i*24),(hx?1920:0)+dx) && captured[i*24+15]==0x80);
+            assert(fabsf(read_float(captured+i*24+16)-(.25f+.5f*(hx?1925:5)/1930))<0.00001f);
+        }
+        /* A layer inside the screen is only placed; ordinary UI is placed as ever. */
+        picture_quad(source,96,1824,54,1026,0,1,0xff);
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1);
+        for(unsigned i=0;i<4;++i){assert(close_to(read_float(captured+i*24),read_float(source+i*24)+dx));assert(!memcmp(captured+i*24+4,source+i*24+4,20));}
+        picture_quad(source,700,1220,400,680,0,1,0xff);
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1220+dx) && !memcmp(captured+4,source+4,20));
+        /* The next update without the picture: the same layers fill the canvas again. */
+        ++test_update;
+        picture_quad(source,-49.5f,1969.5f,-14.5f,1102.5f,0,1,0xff);expect_widened(source,mode);
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-5,1925,-17,1105,.25f,.75f,0x80);expect_widened(source,mode);
+        /* A layer drawn before the picture in an update is not its overlay; the ones after are. */
+        ++test_update;
+        picture_quad(source,-5,1925,-17,1105,0,1,0xff);expect_widened(source,mode);
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,0,1920,0,1088,0,1,0x40);expect_picture(source,mode,0,1920,0x40); /* fading: the bars fade with it */
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-5,1925,-17,1105,0,1,0xff);
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1920+dx) && close_to(read_float(captured+48),dx));
+        /* A picture zoomed past the screen is cut to it; mirrored and other 16:9 sizes count. */
+        ++test_update;
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,-96,2016,-54,1134,0,1,0xff);expect_picture(source,mode,-96,2016,0xff);
+        picture_scene(BC1_WORD,size_word(1280,720),3);
+        picture_quad(source,0,1920,0,1080,0,1,0xff);expect_picture(source,mode,0,1920,0xff);
+        picture_scene(BC1_WORD,size_word(3840,2160),3);
+        picture_quad(source,0,1920,0,1080,0,1,0xff);expect_picture(source,mode,0,1920,0xff);
+        picture_quad(source,0,1920,0,1088,1,0,0xff);
+        submit_log_count=0;invoke_group(source,4);assert(submit_log_count==3 && close_to(read_float(submit_log[0]),1920+dx) && read_float(submit_log[0]+16)==0);
+        /* Before the clock runs a picture is still framed, but nothing is taken for its overlay. */
+        test_update=0;
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,0,1920,0,1088,0,1,0xff);expect_picture(source,mode,0,1920,0xff);
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-5,1925,-17,1105,0,1,0xff);expect_widened(source,mode);
+        test_update=100+mode*100;
+        /* Not a picture, so the full-width rule as before: other shapes (the 2048x2048 backdrops,
+           the 2048x1024 paper, 1920x1088), a format with alpha (BC3 37, RGBA 10), other blending,
+           part of the texture, an unreadable texture, handle or group. */
+        const uint32_t shapes[][2]={{2048,2048},{2048,1024},{1920,1088},{1024,576-1},{1920,1081}};
+        for(unsigned k=0;k<sizeof(shapes)/sizeof(shapes[0]);++k){
+            picture_scene(BC1_WORD,size_word(shapes[k][0],shapes[k][1]),3);
+            picture_quad(source,0,1920,0,1088,0,1,0xff);expect_widened(source,mode);
+        }
+        const uint32_t formats[]={0x02500000,0x00a00000,0x02400000,0x02900000,0};
+        for(unsigned k=0;k<sizeof(formats)/sizeof(formats[0]);++k){
+            picture_scene(formats[k],0x710dc77f,3);
+            picture_quad(source,0,1920,0,1088,0,1,0xff);expect_widened(source,mode);
+        }
+        const uint32_t blends[]={0,1,2,4,5};
+        for(unsigned k=0;k<5;++k){
+            picture_scene(BC1_WORD,0x710dc77f,blends[k]);
+            picture_quad(source,0,1920,0,1088,0,1,0xff);expect_widened(source,mode);
+        }
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,0,1920,0,1088,0,.9375f,0xff);expect_widened(source,mode);
+        picture_quad(source,0,1920,0,1088,.25f,.75f,0xff);expect_widened(source,mode);
+        picture_quad(source,0,1920,0,1088,0,1,0xff);for(unsigned i=0;i<4;++i)write_float(source+i*24+20,(i&1)?.5f:0);expect_widened(source,mode);
+        picture_quad(source,0,1920,0,1088,1,1,0xff);expect_widened(source,mode); /* one texel column, not the picture */
+        picture_quad(source,0,1920,0,1088,0,1,0xff);for(unsigned i=0;i<4;++i)write_float(source+i*24+20,0);expect_widened(source,mode);
+        picture_quad(source,0,1920,0,1088,0,1,0xff);
+        {const uintptr_t nowhere=0x10;memcpy(picture_handle+8,&nowhere,8);expect_widened(source,mode);
+         memcpy(picture_group+0x50,&nowhere,8);expect_widened(source,mode);
+         memset(picture_group+0x50,0,8);expect_widened(source,mode);}
+        submit_log_count=0;invoke_strip(source);assert(submit_log_count==1 && close_to(read_float(captured),1920*canvas_stretch(mode)));
+        /* Another primitive type or caller, a picture short of the screen, an off-screen layer. */
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        submit_log_count=0;invoke_group(source,3);assert(submit_log_count==1 && close_to(read_float(captured),1920*canvas_stretch(mode)));
+        test_caller=0x4a4c59;submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1920+dx));test_caller=0x229a9e;
+        picture_quad(source,0,1920,100,1188,0,1,0xff);submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1920+dx));
+        picture_quad(source,0,1900,0,1088,0,1,0xff);submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1900+dx));
+        picture_quad(source,20,1920,0,1088,0,1,0xff);submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && close_to(read_float(captured),1920+dx));
+        picture_quad(source,0,1920,0,1088,0,1,0xff);
+        test_offscreen=1;submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && !memcmp(captured,source,96));test_offscreen=0;
+        /* None of those left a picture behind for the layers after it. */
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-5,1925,-17,1105,0,1,0xff);expect_widened(source,mode);
+    }
+    /* 16:9 canvases: untouched, and no bars. */
+    const float standard[][2]={{1920,1080},{2560,1440},{1280,720}};
+    for(unsigned k=0;k<3;++k){
+        test_project_width=standard[k][0];test_project_height=standard[k][1];test_project_scale=standard[k][1]/1080.f;
+        ++test_update;
+        picture_scene(BC1_WORD,0x710dc77f,3);
+        picture_quad(source,-96,2016,-54,1134,0,1,0xff);submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && !memcmp(captured,source,96));
+        picture_scene(0x00a00000,size_word(256,256),3);
+        picture_quad(source,-5,1925,-17,1105,0,1,0xff);submit_log_count=0;invoke_group(source,4);assert(submit_log_count==1 && !memcmp(captured,source,96));
+    }
+    ++test_update;use_canvas(3);
+    puts("PASS: whole-screen pictures (the captured 1920x1080 BC1 flashback still; other 16:9 sizes, zoomed, mirrored, fading) keep the 16:9 screen between black bars on every wide canvas, with the vignette and glow drawn over them in the same update cut to it; later updates, earlier layers, other texture shapes and formats, other blending, partial UVs, unreadable textures, other callers and primitives, partial cover, off-screen layers and 16:9 canvases keep the full-width rules; input preserved");
+}
 int main(void) {
     test_projection();
     size_t page=(size_t)sysconf(_SC_PAGESIZE);uintptr_t start=(uintptr_t)fake_guest&~(page-1);
@@ -878,6 +1057,7 @@ int main(void) {
     test_screen_edge_fade();
     test_paper_layer();
     test_talk_portrait();
+    test_screen_picture();
     puts("PASS: both native trampoline ABIs/all arguments, relocated colour global load, persistent input preservation, repeated glyphs without drift, scene-copy exclusion, full-width backgrounds/gradient, outer-edge shading, invalid-coordinate fallback");
     return 0;
 }
