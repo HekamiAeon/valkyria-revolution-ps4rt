@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Valkyria 60 FPS startup patches on a synthetic image (no game data): well-formed writes that
 // stay clear of the canvas patches, all-or-nothing verification, the rewritten fragments
-// (event camera, mouth track, subtitle window) executed at one and two ticks an update, and
-// the camera clip hooks on synthetic clips: a cut keeps its earlier frame.
+// (event camera, mouth track, subtitle window, effect loop restart) executed at one and two
+// ticks an update, and the camera clip hooks on synthetic clips: a cut keeps its earlier frame.
 // Optional argument: a decrypted eboot.elf, checked read-only to match every patch's original
 // bytes.
 #include <sys/mman.h>
@@ -25,12 +25,12 @@ using ValkyriaFrameRate::Start;
 using ValkyriaFrameRate::Write;
 using ValkyriaFrameRate::Writes;
 
-// Enters guest code at `entry` with r12-r15, xmm0-xmm2 and rax from `regs`, and stores them
-// back when it returns.
+// Enters guest code at `entry` with r12-r15, xmm0-xmm2, rax and rbp from `regs`, and stores
+// them back (all but rbp) when it returns.
 struct Regs {
     uint64_t r12, r13, r14, r15;
     float xmm0, xmm1, xmm2, unused;
-    uint64_t rax;
+    uint64_t rax, rbp;
 };
 extern "C" void valkyria_enter(const void* entry, Regs* regs);
 asm(R"(
@@ -54,6 +54,7 @@ valkyria_enter:
     movss 36(%rbx),%xmm1
     movss 40(%rbx),%xmm2
     mov 48(%rbx),%rax
+    mov 56(%rbx),%rbp
     call *%rdi
     mov %r12,0(%rbx)
     mov %r13,8(%rbx)
@@ -166,6 +167,10 @@ void TestStart() {
     assert(helper + 8 + Disp(image, helper + 4) == One && image.data[helper + 8] == 0xc3);
     for (uint64_t call : {0x32a5fd + 6, 0x32a6b9 + 12, 0x32a782 + 12, 0x32a84b + 12})
         assert(image.data[call] == 0xe8 && call + 5 + Disp(image, call + 1) == helper);
+    // The effect loop restart calls its helper, and the helper reads the tick count.
+    const uint64_t restart = 0x17bcac, effect_helper = 0x1798d1;
+    assert(image.data[restart + 4] == 0xe8 && restart + 9 + Disp(image, restart + 5) == effect_helper);
+    assert(effect_helper + 7 + Disp(image, effect_helper + 2) == Ticks && image.data[effect_helper + 13] == 0xc3);
     // A second start finds its own bytes and changes nothing.
     assert(!Start(image.base(), &problem) && problem.rfind("game code differs at 0x", 0) == 0);
     for (const Write& write : Writes()) assert(HookSite(write) ? Hooked(image, write.at) : image.has(write, true));
@@ -327,6 +332,58 @@ void TestSubtitleWindow() {
         assert(widget[0x15b] == 0xc8 && widget[0x15a] == 0 && widget[0x15c] == 0);
     }
     std::puts("PASS: the subtitle window's fade runs every update at two ticks, every second at one");
+}
+
+/// The effect update's loop restart site with an update `length` authored frames long: the
+/// value it leaves at [rbp-0x80], which a looping emitter adds to time - end when it starts over.
+float RestartOffset(Image& image, float length) {
+    float locals[0xa0 / 4] = {}; // the function's frame below rbp
+    Regs regs{};
+    regs.xmm0 = regs.xmm1 = -7;
+    regs.xmm2 = length;
+    regs.rbp = reinterpret_cast<uint64_t>(std::end(locals));
+    valkyria_enter(image.data + 0x17bcac, &regs);
+    const size_t slot = std::size(locals) - 0x80 / 4;
+    for (size_t i = 0; i < std::size(locals); ++i) assert(i == slot || locals[i] == 0);
+    assert(regs.xmm2 == length && regs.xmm0 == locals[slot]);
+    return locals[slot];
+}
+
+void TestEffectLoop() {
+    Image image;
+    Patched(image);
+    image.put(0x17bcc9, {0xc3}); // where the site jumps into the emitter loop
+    const float lengths[] = {0.f, 0.25f, 0.5f, 0.75f, 0.99f, 1.f, 1.5f, 2.f, 3.75f};
+    for (uint32_t ticks : {2u, 3u, 4u}) { // the shipped rate, or a slow update: 1 - (int)length
+        image.u(Ticks) = ticks;
+        for (float length : lengths) assert(RestartOffset(image, length) == 1 - float(int(length)));
+    }
+    image.u(Ticks) = 1; // what the shipped rate has for the same effect: 1 - (int)(2 x length)
+    for (float length : lengths) assert(RestartOffset(image, length) == 1 - float(int(2 * length)));
+    assert(RestartOffset(image, 0.5f) == 0 && RestartOffset(image, 0.25f) == 1 && RestartOffset(image, 1) == -1);
+    // The game's emitter loop with that offset: an emitter `end` authored frames long starts
+    // over every `end` frames at either rate. At half speed the shipped rate itself starts
+    // every loop after the first one frame early; one tick does the same.
+    const auto loops = [&](uint32_t ticks, float speed, float end, int first, int updates_a_loop) {
+        image.u(Ticks) = ticks;
+        const float length = 0.5f * float(ticks) * speed;
+        const float offset = RestartOffset(image, length);
+        float time = 0;
+        int last = 0, count = 0;
+        for (int update = 0; update < 40 * updates_a_loop; ++update) {
+            if (end <= time) {
+                time = (offset - end) + time;
+                if (update - last != (count ? updates_a_loop : first)) return false;
+                last = update, ++count;
+            }
+            time += length;
+        }
+        return count >= 30;
+    };
+    assert(loops(2, 1, 60, 60, 60) && loops(1, 1, 60, 120, 120));
+    assert(loops(2, 1, 7, 7, 7) && loops(1, 1, 7, 14, 14));
+    assert(loops(2, 0.5f, 60, 120, 118) && loops(1, 0.5f, 60, 240, 236));
+    std::puts("PASS: a looping emitter starts over on the frame its loop ends, at one tick as at two");
 }
 
 using Pose = std::array<float, ValkyriaCameraCuts::PoseSize>;
@@ -507,6 +564,7 @@ int main(int argc, char** argv) {
     TestCamera();
     TestMouthTrack();
     TestSubtitleWindow();
+    TestEffectLoop();
     TestCutRules();
     TestCameraHooks();
     if (argc > 1) {

@@ -14,7 +14,9 @@
 //   - counters that advance once an update with no clock at all: every second update while
 //     an update is one tick;
 //   - times authored in frames, stored as frames x step and then run down by the step: frames
-//     x frame unit.
+//     x frame unit;
+//   - the whole authored frames in an update, taken by truncating its length: the length of
+//     two updates while an update is one tick.
 // With two or more ticks in an update (the shipped rate, or a slow update) every patched site
 // computes what the shipped code does.
 #include "valkyria_frame_rate.h"
@@ -59,6 +61,10 @@ Bytes Load(const char* opcode, uint64_t at, uint64_t from) {
     Put32(out, Relative(at + 8, from));
     return out;
 }
+/// Fourteen of the fifteen alignment bytes after FUN_001798a0: the helper the effect update's
+/// loop restart calls.
+constexpr uint64_t EffectHelper = 0x1798d1;
+
 /// call CameraHelper, the instruction at `at`.
 Bytes CallHelper(uint64_t at) {
     Bytes out{0xe8};
@@ -202,6 +208,35 @@ std::vector<Write> Writes() {
     // vmulss xmm0,xmm0,[step] -> [frame unit].
     for (uint64_t at : {0x36c87d, 0x36d19c, 0x36d56e, 0x3a97f2, 0x686625})
         add(at, Load("c5fa5905", at, Step), Load("c5fa5905", at, Unit));
+
+    // Looping effect emitters (effect update, FUN_0017aeb0): an emitter whose time has reached
+    // its end starts over at time - end + 1 - whole, where whole is the update's length in
+    // authored frames, truncated. A shipped update is one frame and the emitter starts over
+    // at 0; half a frame truncates to none, so every loop after the first was one authored
+    // frame short and the next particle appeared a frame before the one it replaces was gone
+    // (a looping glow drew twice for two updates, once a loop). With one tick in the update
+    // the length truncated is that of two updates: what the shipped rate truncates at the
+    // same effect speed. Rewritten in place around a call to
+    // cmp dword [ticks],1 ; je +4 ; vmovaps xmm0,xmm2 ; ret. The shipped code also leaves the
+    // count in eax and 1.0 in xmm1; the emitter loop it jumps to loads both before any use.
+    {
+        Bytes helper = Hex("833d"); // cmp dword [ticks],1 (the immediate follows the operand)
+        Put32(helper, Relative(EffectHelper + 7, Ticks));
+        Append(helper, Hex("01" "7404" "c5f828c2" "c3"));
+        add(EffectHelper, Bytes(helper.size(), 0x90), helper);
+        const uint64_t at = 0x17bcac; // xmm2: the update's length
+        Bytes restart = Hex("c5ea58c2" // vaddss xmm0,xmm2,xmm2    two updates
+                            "e8");     // call helper              ... or this one, as shipped
+        Put32(restart, Relative(at + 9, EffectHelper));
+        Append(restart, Hex("c5fa2cc0"    // vcvttss2si eax,xmm0
+                            "f7d8" "ffc0" // neg eax ; inc eax
+                            "c5fa2ac0"    // vcvtsi2ss xmm0,xmm0,eax
+                            "c5fa114580"  // vmovss [rbp-0x80],xmm0
+                            "0f1f00"));
+        // vcvttss2si eax,xmm2 ; vmovss xmm1,[1.0] ; vxorps xmm0,xmm0,xmm0 ; vcvtsi2ss xmm0,xmm0,eax ;
+        // vsubss xmm0,xmm1,xmm0 ; vmovss [rbp-0x80],xmm0
+        add(at, Hex("c5fa2cc2" "c5fa100d90836400" "c5f857c0" "c5fa2ac0" "c5f25cc0" "c5fa114580"), restart);
+    }
 
     // Keyframed camera animations are sampled between their frames at 60, which blends the
     // two shots of a cut for one update: both clip samplers go through hooks that keep the
