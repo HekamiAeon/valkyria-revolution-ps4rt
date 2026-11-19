@@ -191,6 +191,10 @@ target_compile_definitions(pipeline-binary-initialization-test PRIVATE NOMINMAX 
 target_include_directories(pipeline-binary-initialization-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(pipeline-binary-initialization-test PRIVATE ps4rtgpu)
 target_compile_options(pipeline-binary-initialization-test PRIVATE -fPIC)
+add_executable(pipeline-binary-policy-test EXCLUDE_FROM_ALL ../tests/test_pipeline_binary_policy.cpp)
+target_include_directories(pipeline-binary-policy-test PRIVATE shadps4)
+target_compile_options(pipeline-binary-policy-test PRIVATE -UNDEBUG)
+add_test(NAME pipeline-binary-policy COMMAND pipeline-binary-policy-test)
 set_source_files_properties(../tests/test_pipeline_binary_cache.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)

@@ -2,13 +2,14 @@
 #include <cstdlib>
 #include <cstdio>
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_pipeline_binary_policy.h"
 
 // Keep the dispatcher's ABI consistent with the renderer library.
 #undef NDEBUG
 #include <cassert>
 
 namespace Vulkan {
-bool InitializePipelineBinaryCache(vk::Device device, bool supported,
+bool InitializePipelineBinaryCache(vk::Device device, PipelineBinaryChoice choice, bool supported,
                                    vk::PipelineBinaryKeyKHR& global_key);
 }
 
@@ -53,36 +54,39 @@ void TestFallbacks() {
     };
     const vk::Device device{reinterpret_cast<VkDevice>(uintptr_t{1})};
     vk::PipelineBinaryKeyKHR key{.keySize = 2};
-    SetCache("0");
-    assert(!Vulkan::InitializePipelineBinaryCache(device, true, key));
+    using Vulkan::PipelineBinaryChoice;
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::OffBySetting, true, key));
     assert(key_queries == 0 && key.keySize == 0);
 
-    SetCache("1");
-    assert(!Vulkan::InitializePipelineBinaryCache(device, false, key));
+    // Off on NVIDIA: nothing of the extension is called.
+    key.keySize = 2;
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::OffOnNvidia, true, key));
+    assert(key_queries == 0 && key.keySize == 0);
+
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, false, key));
     assert(key_queries == 0 && key.keySize == 0);
 
     const auto get_data = dispatch.vkGetPipelineBinaryDataKHR;
     dispatch.vkGetPipelineBinaryDataKHR = nullptr;
-    assert(!Vulkan::InitializePipelineBinaryCache(device, true, key));
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, true, key));
     assert(key_queries == 0 && key.keySize == 0);
     dispatch.vkGetPipelineBinaryDataKHR = get_data;
 
     key_result = VK_ERROR_UNKNOWN;
-    assert(!Vulkan::InitializePipelineBinaryCache(device, true, key));
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, true, key));
     assert(key_queries == 1 && key.keySize == 0);
 
     key_result = VK_SUCCESS;
     key_size = 0;
-    assert(!Vulkan::InitializePipelineBinaryCache(device, true, key));
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, true, key));
     assert(key_queries == 2 && key.keySize == 0);
 
     key_size = VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR + 1;
-    assert(!Vulkan::InitializePipelineBinaryCache(device, true, key));
+    assert(!Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, true, key));
     assert(key_queries == 3 && key.keySize == 0);
 
-    SetCache("");
     key_size = VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR;
-    assert(Vulkan::InitializePipelineBinaryCache(device, true, key));
+    assert(Vulkan::InitializePipelineBinaryCache(device, PipelineBinaryChoice::On, true, key));
     assert(key_queries == 4 && key.keySize == key_size && key.key[0] == 7);
     dispatch = original;
 }
