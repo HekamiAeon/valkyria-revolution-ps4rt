@@ -27,8 +27,13 @@ class PlayerReleaseLayoutTests(unittest.TestCase):
         preview = json.loads(output.getvalue())
         player = preview['runtime_files']
         source = preview['source_files']
-        self.assertIn('docs/DISTRIBUTING_LINUX.md', source)
+        # Project docs stay out of source archives (.gitattributes); credits and licenses stay.
+        self.assertNotIn('docs/DISTRIBUTING_LINUX.md', source)
+        self.assertNotIn('README.md', source)
+        self.assertNotIn('packaging/linux/README.md', source)
         self.assertIn('docs/UPSTREAM_CREDITS.md', source)
+        self.assertIn('docs/licenses/GPL-3.0.txt', source)
+        self.assertIn('packaging/linux/PLAYER_README.txt', source)
         self.assertIn('src/runtime.c', source)
         self.assertIn('LICENSE', player)
         self.assertIn('CREDITS.md', player)

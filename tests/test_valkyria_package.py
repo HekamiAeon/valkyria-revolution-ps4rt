@@ -2,6 +2,9 @@
 """The distribution boundary must reject game/private files even if tracked."""
 import importlib.util
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import sys
 import unittest
 
@@ -84,6 +87,69 @@ class PackageBoundary(unittest.TestCase):
         for src in package.RUNTIME.values():
             self.assertNotIn('out/valkyria', src)
             self.assertNotIn('original', Path(src).parts)
+
+    def test_source_requires_credits_and_license_but_not_the_readme(self):
+        self.assertIn('LICENSE', package.REQUIRED_SOURCE)
+        self.assertIn('docs/UPSTREAM_CREDITS.md', package.REQUIRED_SOURCE)
+        self.assertIn('docs/licenses/GPL-3.0.txt', package.REQUIRED_SOURCE)
+        self.assertNotIn('README.md', package.REQUIRED_SOURCE)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def git(*args):
+    return subprocess.run(['git', '-C', str(ROOT), *args], capture_output=True, check=True).stdout
+
+
+def export_ignored(paths):
+    """Whether this checkout's .gitattributes leaves each path out of `git archive`."""
+    fields = git('check-attr', '-z', 'export-ignore', '--', *paths).split(b'\0')
+    return {fields[i].decode(): fields[i + 2] == b'set' for i in range(0, len(fields) - 2, 3)}
+
+
+def tracked(*paths):
+    return [p.decode() for p in git('ls-files', '-z', '--', *paths).split(b'\0') if p]
+
+
+# Project documentation: kept out of source archives, except the credits and docs/licenses/.
+PROJECT_DOCS = ('README.md', 'docs', 'packaging/linux/README.md', 'packaging/github/README.md')
+
+
+def project_doc(path):
+    return path in PROJECT_DOCS or path.startswith('docs/')
+
+
+@unittest.skipUnless(shutil.which('git') and (ROOT / '.git').exists(), 'needs a Git checkout')
+class SourceArchiveDocsPolicy(unittest.TestCase):
+    """Project docs stay out of GitHub's generated archives and the package_valkyria.py source
+    export (both use git archive), so they can change after a release is built."""
+
+    def test_project_docs_are_left_out_of_source_archives(self):
+        docs = [p for p in tracked(*PROJECT_DOCS)
+                if p != 'docs/UPSTREAM_CREDITS.md' and not p.startswith('docs/licenses/')]
+        for name in ('README.md', 'docs/RUNNING_LINUX.md', 'packaging/linux/README.md',
+                     'packaging/github/README.md'):
+            self.assertIn(name, docs)
+        for path, ignored in export_ignored(docs).items():
+            with self.subTest(path=path):
+                self.assertTrue(ignored)
+
+    def test_credits_licenses_and_notices_stay_in_source_archives(self):
+        notice = re.compile(r'(^|/)(license|notice|copying|readme)[^/]*$', re.IGNORECASE)
+        keep = ['docs/UPSTREAM_CREDITS.md', 'docs/licenses', 'docs/licenses/GPL-3.0.txt',
+                'docs/licenses/nested/NOTICE.txt', 'packaging/linux/PLAYER_README.txt',
+                *(p for p in tracked() if notice.search(p) and not project_doc(p))]
+        self.assertIn('LICENSE', keep)
+        self.assertIn('gpu/third_party/imgui/LICENSE.txt', keep)
+        for path, ignored in export_ignored(keep).items():
+            with self.subTest(path=path):
+                self.assertFalse(ignored)
+
+    def test_required_source_is_never_left_out(self):
+        for path, ignored in export_ignored(sorted(package.REQUIRED_SOURCE)).items():
+            with self.subTest(path=path):
+                self.assertFalse(ignored)
 
 
 if __name__ == '__main__':

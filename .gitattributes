@@ -1,2 +1,16 @@
 # git apply needs the patches byte-exact with the LF sources they change, on any core.autocrlf.
 *.patch text eol=lf
+
+# Project documentation (the root README, docs/, the builder guide and the GitHub packaging
+# guide) names release versions and download links, so source archives leave it out: GitHub's
+# generated ZIP/TAR and the tools/package_valkyria.py source export both read these rules
+# (both use git archive), and the docs can change after a release is built. Credits, license
+# texts and third-party notices stay in every archive. The licenses folder itself is unset too:
+# an ignored directory hides everything below it.
+/README.md export-ignore
+/packaging/linux/README.md export-ignore
+/packaging/github/README.md export-ignore
+/docs/** export-ignore
+/docs/UPSTREAM_CREDITS.md -export-ignore
+/docs/licenses -export-ignore
+/docs/licenses/** -export-ignore

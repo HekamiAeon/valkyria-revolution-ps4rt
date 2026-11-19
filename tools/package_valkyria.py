@@ -21,6 +21,10 @@ FSR4_LOCK = load_lock(ROOT)
 FSR4_FILES = FSR4_LOCK['files']
 SOURCE_DIRS = {'src', 'gpu', 'third_party', 'scripts', 'tools', 'tests', 'docs',
                'packaging', 'patches', '.github'}
+# Documentation this allowlist permits. Which of it reaches an archive is decided by the
+# export-ignore rules in .gitattributes (git archive applies them): project docs (README, docs/,
+# the builder and GitHub packaging guides) stay out so they can change after a release, the
+# credits and docs/licenses/ stay in.
 PUBLIC_DOCS = {
     'docs/RUNNING_LINUX.md', 'docs/DISTRIBUTING_LINUX.md',
     'docs/UPSTREAM_CREDITS.md', 'docs/LINUX_BINARY_RELEASE.md',
@@ -28,6 +32,10 @@ PUBLIC_DOCS = {
 # The public README uses this single reviewed gameplay screenshot.
 PUBLIC_MEDIA = {'docs/images/readme/gameplay.png'}
 PUBLIC_DOC_LICENSES = {'docs/licenses/GPL-3.0.txt'}
+# README.md is not required: .gitattributes keeps project docs out of source archives.
+# The credits and the license texts must be in every source archive.
+REQUIRED_SOURCE = {'build.sh', 'gpu/CMakeLists.txt', 'LICENSE', 'docs/UPSTREAM_CREDITS.md',
+                   'docs/licenses/GPL-3.0.txt'}
 SOURCE_FILES = {'LICENSE', 'README.md', 'build.sh',
                 'build-headless.sh',
                 'shell.nix', 'flake.nix', 'flake.lock', '.gitignore', '.gitmodules',
@@ -218,7 +226,12 @@ def main():
             'Unreviewed committed FSR4 assets: '
             + ', '.join(sorted(unexpected)[:5])
         )
-    source_files = [f for f in files if source_allowed(f)]
+    # git archive leaves out what .gitattributes marks export-ignore (project docs), so the
+    # export list is what it writes, narrowed by the allowlist.
+    source_tar = git('archive', '--format=tar', 'HEAD')
+    with tarfile.open(fileobj=io.BytesIO(source_tar)) as source:
+        exported = set(source.getnames())
+    source_files = [f for f in files if source_allowed(f) and f in exported]
     runtime_files = dict(RUNTIME)
     runtime_files.update({name: name for name in PLAYER_LICENSE_FILES})
     if args.runtime:
@@ -238,8 +251,9 @@ def main():
         verify_bundle(bundle)
     if git('status', '--porcelain').strip():
         raise SystemExit('Checkpoint the working tree first; releases must identify the exact committed source.')
-    if not source_files or 'build.sh' not in source_files:
-        raise SystemExit('Source export is incomplete')
+    missing = REQUIRED_SOURCE - set(source_files)
+    if missing:
+        raise SystemExit('Source export is incomplete: ' + ', '.join(sorted(missing)))
     verified_assets(ROOT)
     if not set(FSR4_FILES).issubset(source_files):
         raise SystemExit('Commit all locked FSR4 v07 assets before exporting')
@@ -270,7 +284,7 @@ def main():
             manifest['files'][name] = hashlib.sha256(data).hexdigest()
         # Reading Git's archive includes vendored third-party sources and notices,
         # without untracked files, sub-repository metadata, or local modifications.
-        with tarfile.open(fileobj=io.BytesIO(git('archive', '--format=tar', 'HEAD'))) as source:
+        with tarfile.open(fileobj=io.BytesIO(source_tar)) as source:
             for member in source:
                 if member.name not in source_files:
                     continue
