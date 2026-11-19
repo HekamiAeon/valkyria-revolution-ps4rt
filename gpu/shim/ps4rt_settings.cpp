@@ -336,10 +336,11 @@ void ConfigureValkyriaUpscaler(const char* requested, bool object_motion) {
     if (requested && std::strcmp(requested, "fsr3") == 0) selected = UpscalerFsr3;
     else if (requested && std::strcmp(requested, "fsr4") == 0) selected = UpscalerFsr4;
     else if (requested && std::strcmp(requested, "fsr411") == 0) selected = UpscalerFsr411;
+    else if (requested && std::strcmp(requested, "fsr1") == 0) selected = UpscalerFsr1;
     else if (requested && std::strcmp(requested, "off") == 0) selected = UpscalerOff;
     else if (requested) {
         selected = UpscalerOff;
-        std::printf("Valkyria: unknown upscaler '%s'; expected off/fsr3/fsr4/fsr411\n", requested);
+        std::printf("Valkyria: unknown upscaler '%s'; expected off/fsr1/fsr3/fsr4/fsr411\n", requested);
     }
     SetValkyriaUpscaler(selected, object_motion);
     v.startup_upscaler = v.upscaler;
@@ -348,11 +349,13 @@ void ConfigureValkyriaUpscaler(const char* requested, bool object_motion) {
 
 void SetValkyriaUpscaler(int selected, bool object_motion) {
     auto& v = Get();
-    if (selected != UpscalerOff && selected != UpscalerFsr3 &&
-        selected != UpscalerFsr4 && selected != UpscalerFsr411) selected = UpscalerFsr3;
+    if (selected != UpscalerOff && selected != UpscalerFsr3 && selected != UpscalerFsr4 &&
+        selected != UpscalerFsr411 && selected != UpscalerFsr1) selected = UpscalerFsr3;
     const bool temporal = selected != UpscalerOff;
-    v.jitter = temporal;
-    v.object_motion = temporal && object_motion;
+    // FSR 1 is spatial: no camera jitter and no motion vectors.
+    const bool spatial = selected == UpscalerFsr1;
+    v.jitter = temporal && !spatial;
+    v.object_motion = temporal && !spatial && object_motion;
     v.reactive = false;
     v.spatial_aa = false;
     v.fsr1 = false;
@@ -362,8 +365,9 @@ void SetValkyriaUpscaler(int selected, bool object_motion) {
     v.upscaler = selected;
     if (temporal) {
         std::printf("Valkyria: %s, %s; native scene + output-size host UI\n",
-                    UpscalerName(selected), object_motion ? "camera + vertex-history motion"
-                                                         : "camera motion only");
+                    UpscalerName(selected), spatial         ? "spatial, no motion"
+                                            : object_motion ? "camera + vertex-history motion"
+                                                            : "camera motion only");
     }
 }
 
@@ -481,7 +485,8 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss"};
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss",
+                                                         "fsr1"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 

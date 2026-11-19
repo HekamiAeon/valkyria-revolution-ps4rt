@@ -70,7 +70,8 @@ int main() {
     Ps4RtSettings::Load();
     assert(v.display_mode == G::Borderless && !v.vsync && v.fps_limit == 240 && !v.async_shaders);
     assert(v.render_resolution == 7 && v.engine_fps == 240 && !v.deferred_readback && v.stale_readback);
-    // FSR 1 left the menus in 2.2.0: a saved fsr1=1 (or PS4RT_FSR1) no longer turns it on.
+    // The whole-frame FSR 1 switch left the menus in 2.2.0: a saved fsr1=1 (or PS4RT_FSR1) no
+    // longer turns it on. FSR 1 is the upscaler=fsr1 provider now (test_upscaler_support.cpp).
     assert(!v.fsr1 && !v.rcas && v.rcas_strength == 40 && v.frames_queued == 2);
     Env("PS4RT_FSR1", "1");
     Ps4RtSettings::Load();

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <unistd.h>
 #include "ps4rt_settings.h"
@@ -94,12 +95,26 @@ int main() {
         assert(!s.jitter && !s.object_motion && !s.startup_object_motion);
         assert(!s.spatial_aa && !s.fsr1);
     }
+    // FSR 1 is spatial: selected like the others, with no jitter and no motion vectors, and it
+    // needs no GPU feature, so the FSR 4 fallback leaves it alone.
+    s.spatial_aa = s.fsr1 = s.rcas = true;
+    ConfigureValkyriaUpscaler("fsr1", true);
+    assert(s.upscaler == UpscalerFsr1 && s.startup_upscaler == UpscalerFsr1);
+    assert(!s.jitter && !s.object_motion && !s.startup_object_motion);
+    assert(!s.spatial_aa && !s.fsr1 && !s.rcas && !s.reactive);
+    ConfigureUpscalerSupport(false, false);
+    assert(s.upscaler == UpscalerFsr1);
+    assert(std::strcmp(UpscalerName(UpscalerFsr1), "fsr1") == 0);
+    // Leaving it from the menu brings jitter and object motion back.
+    SetValkyriaUpscaler(UpscalerFsr3);
+    assert(s.upscaler == UpscalerFsr3 && s.jitter && s.object_motion);
     ConfigureValkyriaUpscaler("fsr3", false);
     assert(s.upscaler == UpscalerFsr3 && !s.object_motion && s.jitter);
     // User menu choices survive process-style reloads at every supported output.
     unsetenv("VALKYRIA_UPSCALER");
     unsetenv("VALKYRIA_OBJECT_MOTION");
-    for (int provider : {UpscalerOff, UpscalerFsr3, UpscalerFsr4}) {
+    for (int provider : {UpscalerOff, UpscalerFsr1, UpscalerFsr3, UpscalerFsr4}) {
+        const bool temporal = provider != UpscalerOff && provider != UpscalerFsr1;
         for (int output : {0, 2, 3}) {
             s.valkyria = true;
             s.sharpen = true;
@@ -111,9 +126,10 @@ int main() {
             Load(true);
             assert(s.upscaler == provider && s.startup_upscaler == provider);
             assert(s.output_res == output && s.sharpness > 0.419f && s.sharpness < 0.421f);
-            assert(s.jitter == (provider != UpscalerOff));
-            assert(s.object_motion == (provider != UpscalerOff));
+            assert(s.jitter == temporal);
+            assert(s.object_motion == temporal);
             assert(!s.fsr1 && !s.spatial_aa);
+            // FSR 1 sharpens the scene itself, before the HUD: no whole-frame RCAS with it.
             assert(s.rcas == (provider == UpscalerOff));
         }
     }

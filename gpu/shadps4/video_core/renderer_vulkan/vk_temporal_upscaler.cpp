@@ -14,6 +14,7 @@
 
 #include <vk_mem_alloc.h>
 
+#include "ps4rt_graphics.h"
 #include "ps4rt_settings.h"
 #include "ps4rt_toggles.h"
 #include "ffx_vk_portable.h"
@@ -239,14 +240,16 @@ bool TemporalUpscaler::Active() const {
            (Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerFsr3 ||
             Ps4RtSettings::IsFsr4(Ps4RtSettings::Get().upscaler) ||
             Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa ||
-            Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerDlss) &&
+            Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerDlss ||
+            Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerFsr1) &&
            !Ps4RtToggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask: the opaque snapshot and the mask pass would be wasted.
     return Ps4RtSettings::Get().reactive && !Ps4RtToggle::Disabled(1u << 27) && !UseFsr4() && !UseDlss() &&
-           Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerTaa;
+           Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerTaa &&
+           Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerFsr1;
 }
 
 void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
@@ -437,12 +440,15 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     // DLSS, like FSR 4, has its own context: no portable FSR 3 context is made.
     const bool use_fsr4 = UseFsr4() || UseDlss();
     const bool use_taa = Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa;
+    // FSR 1 needs no FSR 3 context either (its pass is made on first use).
+    const bool use_fsr1 = Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerFsr1;
     if (use_taa && (w != ow || h != oh)) {
         std::printf("TAA: remove PS4RT_RENDER_RES to use native-resolution TAA\n");
         return false;
     }
     if (resources_ready && w == width && h == height && ow == out_width && oh == out_height &&
-        hdr == context_hdr && use_fsr4 == resources_fsr4 && use_taa == resources_taa) {
+        hdr == context_hdr && use_fsr4 == resources_fsr4 && use_taa == resources_taa &&
+        use_fsr1 == resources_fsr1) {
         return true;
     }
     const auto device = instance.GetDevice();
@@ -481,7 +487,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     create_info.maxRenderSize = {w, h};
     create_info.maxOutputSize = {ow, oh};
     // FSR 4 has its own model context (vk_fsr4); the images below are shared.
-    if (!use_fsr4 && !use_taa) {
+    if (!use_fsr4 && !use_taa && !use_fsr1) {
         if (const u64 issues = ffxVkPortableValidateUpscaleCreateInfo(&create_info)) {
             PrintIssues("create info", issues);
             return false;
@@ -582,6 +588,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     resources_ready = true;
     resources_fsr4 = use_fsr4;
     resources_taa = use_taa;
+    resources_fsr1 = use_fsr1;
     if (use_taa) {
         std::printf("TAA: context %ux%u -> %ux%u (%s), no FSR model\n", w, h, ow, oh,
                     hdr ? "HDR scene color" : "tonemapped frame");
@@ -589,6 +596,10 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     }
     if (use_fsr4) {
         std::printf("Upscaler: FSR 4 inputs %ux%u -> %ux%u\n", w, h, ow, oh);
+        return true;
+    }
+    if (use_fsr1) {
+        std::printf("Upscaler: FSR 1 inputs %ux%u -> %ux%u (tonemapped frame)\n", w, h, ow, oh);
         return true;
     }
     FfxVkPortableMemoryUsage usage{};
@@ -1284,6 +1295,8 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
 }
 
 void TemporalUpscaler::Run() {
+    // FSR 1 runs only on the scaled path (RunScaled); this path would need an FSR 3 context.
+    if (Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerFsr1) return;
     if (auto* profiler = GpuProfiler::Get()) {
         const char* label = Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa
             ? "upscaler Run (TAA)" : "upscaler Run (FSR)";
@@ -1918,7 +1931,10 @@ void TemporalUpscaler::RunScaled() {
                             vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
-        layer = PrepareLayer(w, h, ow, oh);
+        // A talk portrait's layer is gathered over frames with jitter and motion, which FSR 1
+        // has none of: there the portrait is shown as the game drew it.
+        if (Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerFsr1)
+            layer = PrepareLayer(w, h, ow, oh);
         runtime.FlushBarriers();
     }
 
@@ -1950,7 +1966,8 @@ void TemporalUpscaler::RunScaled() {
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
             all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-    camera_motion.RecordMotion(cmdbuf, depth_view, *motion_view, w, h);
+    const bool spatial = Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerFsr1;
+    if (!spatial) camera_motion.RecordMotion(cmdbuf, depth_view, *motion_view, w, h);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
             vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
@@ -1966,13 +1983,15 @@ void TemporalUpscaler::RunScaled() {
     last_frame = now;
 
     // ps4rt: FSR 4 writes its HDR-format output, copied into the output-size UI image.
-    if (UseFsr4() || UseDlss() || Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa) {
+    if (UseFsr4() || UseDlss() || spatial || Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa) {
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
         bool ok4 = true;
         if (Ps4RtSettings::Get().upscaler == Ps4RtSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
+        } else if (spatial) {
+            ok4 = RecordFsr1(cmdbuf, color_view, source_width, source_height, w, h, ow, oh);
         } else if (UseDlss()) {
             ok4 = RecordDlss(cmdbuf,
                              {color_image, color_view, color.info.pixel_format,
@@ -1994,12 +2013,14 @@ void TemporalUpscaler::RunScaled() {
                 static int announced_provider = -1;
                 const int provider = Ps4RtSettings::Get().upscaler;
                 if (provider != announced_provider) {
-                    std::printf("Valkyria: %s dispatched %ux%u -> %ux%u before HUD, preserved depth\n",
-                                Ps4RtSettings::UpscalerName(provider), w, h, ow, oh);
+                    // FSR 1 takes colour only; the others read the game's preserved depth.
+                    std::printf("Valkyria: %s dispatched %ux%u -> %ux%u before HUD%s\n",
+                                Ps4RtSettings::UpscalerName(provider), w, h, ow, oh,
+                                spatial ? "" : ", preserved depth");
                     announced_provider = provider;
                 }
             }
-            if (Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerTaa) {
+            if (Ps4RtSettings::Get().upscaler != Ps4RtSettings::UpscalerTaa && !spatial) {
                 ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
             }
             barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
@@ -2455,6 +2476,87 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
         reset = true;
     }
     return ok;
+}
+
+bool TemporalUpscaler::RecordFsr1(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 source_width,
+                                  u32 source_height, u32 w, u32 h, u32 ow, u32 oh) {
+    const auto& settings = Ps4RtSettings::Get();
+    // EASU when the output is larger, RCAS alone at Native output; neither: nothing to record.
+    if (!Ps4RtGraphics::FsrPassRuns(true, settings.sharpen, int(w), int(h), int(ow), int(oh)))
+        return false;
+    if (!fsr1) {
+        fsr1 = std::make_unique<HostPasses::FsrPass>();
+        fsr1->Create(instance.GetDevice(), instance.GetAllocator(), 2);
+    }
+    static u32 reported_w = 0, reported_h = 0;
+    static bool reported_rcas = false;
+    if (reported_w != ow || reported_h != oh || reported_rcas != settings.sharpen) {
+        reported_w = ow;
+        reported_h = oh;
+        reported_rcas = settings.sharpen;
+        std::printf("Upscaler: FSR 1 (%s%s) %ux%u -> %ux%u\n", w < ow ? "EASU" : "",
+                    settings.sharpen ? (w < ow ? " + RCAS" : "RCAS") : "", w, h, ow, oh);
+    }
+    HostPasses::FsrPass::Settings fsr{};
+    fsr.enable = true;
+    fsr.use_rcas = settings.sharpen;
+    fsr.rcas_attenuation = Ps4RtGraphics::RcasAttenuation(
+        int(std::clamp(settings.sharpness.load(), 0.0f, 1.0f) * 100.0f));
+    // The scene fills the top-left w x h of the source; the input is the game's tonemapped
+    // frame (display range), in General layout.
+    fsr.input_viewport = vk::Extent2D{w, h};
+    fsr.input_layout = vk::ImageLayout::eGeneral;
+    fsr1->Render(cmdbuf, color, {source_width, source_height}, {ow, oh}, fsr, false);
+    const vk::Image result = fsr1->LastOutputImage();
+    if (!result) return false;
+    // FSR 1 output (ShaderReadOnlyOptimal, RGBA16F like output_image) -> output_image (General).
+    const std::array<vk::ImageMemoryBarrier2, 2> to_copy{{
+        {.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+         .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+         .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+         .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+         .oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+         .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+         .image = result,
+         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+        {.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+         .srcAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+         .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+         .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+         .oldLayout = vk::ImageLayout::eGeneral,
+         .newLayout = vk::ImageLayout::eGeneral,
+         .image = vk::Image(output_image),
+         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+    }};
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(to_copy.size()),
+                             .pImageMemoryBarriers = to_copy.data()});
+    cmdbuf.copyImage(result, vk::ImageLayout::eTransferSrcOptimal, vk::Image(output_image),
+                     vk::ImageLayout::eGeneral,
+                     vk::ImageCopy{.srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                   .extent = {ow, oh, 1}});
+    // Back to the layout the pass expects next time it writes this image.
+    const std::array<vk::ImageMemoryBarrier2, 2> after{{
+        {.srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+         .srcAccessMask = vk::AccessFlagBits2::eTransferRead,
+         .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+         .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+         .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+         .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+         .image = result,
+         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+        {.srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+         .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+         .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+         .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+         .oldLayout = vk::ImageLayout::eGeneral,
+         .newLayout = vk::ImageLayout::eGeneral,
+         .image = vk::Image(output_image),
+         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+    }};
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(after.size()),
+                             .pImageMemoryBarriers = after.data()});
+    return true;
 }
 
 } // namespace Vulkan

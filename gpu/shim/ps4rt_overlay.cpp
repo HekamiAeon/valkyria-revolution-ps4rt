@@ -312,6 +312,7 @@ const char* UpscalerLabel(int upscaler) {
     case Ps4RtSettings::UpscalerFsr411: return "FSR 4.1.1";
     case Ps4RtSettings::UpscalerTaa: return "TAA";
     case Ps4RtSettings::UpscalerDlss: return "DLSS";
+    case Ps4RtSettings::UpscalerFsr1: return "FSR 1";
     default: return "";
     }
 }
@@ -386,16 +387,17 @@ void ValkyriaGraphics() {
                   nullptr, Ps4RtGraphics::DisplayModeCount,
                   "Windowed, borderless window, or exclusive fullscreen. Applies immediately.");
         CheckRow("FPS counter", s.show_fps, "Shows the frame rate in a corner of the screen. Applies live.");
-        static const char* const providers[] = {"Off / Original", "FSR 3.1", "FSR 4 v07"};
+        static const char* const providers[] = {"Off / Original", "FSR 1", "FSR 3.1", "FSR 4 v07"};
         static constexpr int provider_values[] = {Ps4RtSettings::UpscalerOff,
-            Ps4RtSettings::UpscalerFsr3, Ps4RtSettings::UpscalerFsr4};
+            Ps4RtSettings::UpscalerFsr1, Ps4RtSettings::UpscalerFsr3, Ps4RtSettings::UpscalerFsr4};
         // Commit the provider together with its required motion/jitter settings.
         std::atomic<int> provider{s.upscaler.load()};
         ChoiceRow("Upscaling / anti-aliasing", provider, providers, provider_values,
-                  s.fsr4_supported ? 3 : 2,
-                  "FSR reconstructs the scene before the HUD. FSR 3.1 and 4 rebuild the image over "
-                  "several frames (smoother edges, heavier). Off uses the original image with "
-                  "ordinary display scaling. Applies live.");
+                  s.fsr4_supported ? 4 : 3,
+                  "FSR reconstructs the scene before the HUD. FSR 1 is the light one for weak GPUs: "
+                  "it upscales each frame on its own (no anti-aliasing). FSR 3.1 and 4 rebuild the "
+                  "image over several frames (smoother edges, heavier). Off uses the original image "
+                  "with ordinary display scaling. Applies live.");
         if (provider != s.upscaler)
             Ps4RtSettings::SetValkyriaUpscaler(provider);
         {
@@ -403,7 +405,10 @@ void ValkyriaGraphics() {
             int output_width, output_height;
             Ps4RtSettings::OutputSize(s.output_res, output_width, output_height);
             const float ratio = float(output_height) / float(scene_height);
-            const char* mode = ratio < 1.01f ? "Native AA" : std::abs(ratio - 1.5f) < 0.01f ? "Quality"
+            // FSR 1 has no anti-aliasing: at Native output it sharpens, or does nothing.
+            const bool spatial = s.upscaler == Ps4RtSettings::UpscalerFsr1;
+            const char* mode = ratio < 1.01f ? (!spatial ? "Native AA" : s.sharpen ? "Sharpening only" : "Original")
+                : std::abs(ratio - 1.5f) < 0.01f ? "Quality"
                 : std::abs(ratio - 2.f) < 0.01f ? "Performance" : std::abs(ratio - 3.f) < 0.01f ? "Ultra Performance"
                 : nullptr;
             char text[96];
@@ -467,6 +472,8 @@ void ValkyriaGraphics() {
             ImGui::TextWrapped("Restart the game to apply the selected graphics quality.");
         if (const char* problem = s.graphics_quality_problem)
             ImGui::TextWrapped("The selected graphics quality could not start this launch (%s); running at Max.", problem);
+        if (s.upscaler == Ps4RtSettings::UpscalerFsr1 && s.output_res == Ps4RtSettings::OutputNative && !s.sharpen)
+            ImGui::TextWrapped("FSR 1 only upscales and sharpens: at Native output with Sharpening at 0%% the original image is shown.");
         if (!s.fsr4_supported) ImGui::TextWrapped("FSR 4 v07 requires GPU features unavailable on this device. FSR 3.1 remains available.");
         if (const char* problem = s.fsr4_problem.load()) ImGui::TextWrapped("%s", problem);
     }
