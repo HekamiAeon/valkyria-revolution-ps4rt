@@ -528,9 +528,18 @@ static void canvas_forward(uintptr_t context,const void *vertices,uint32_t count
            composite instead of staying a 16:9 box over it. Its border fills the rows below it
            (logged: two 960x56 quads, x 0..960 and 960..1920 by y 1024..1080, from a rotated
            slice of the same texture's spare columns): a layer exactly from that edge to the
-           screen's bottom edge belongs to the full-screen paper wherever it sits across. */
-        int paper_border=count==4 && fabsf(min_y-1024)<=0.5f && fabsf(max_y-1080)<=0.5f &&
-                         min_x>=-2 && max_x<=1922;
+           screen's bottom edge belongs to the full-screen paper wherever it sits across. The
+           squad menu's map is the same kind of paper with the whole 64-row slice as its border
+           (read at 5120x1440: x 0..1024 and 1024..1920, or 0..960 and 960..1920, by y
+           1024..1088, u 0.9375..1), 8 rows past the bottom edge: past that edge a layer counts
+           while it ends within the slice and samples only those spare columns. */
+        int spare_columns=count==4;
+        for(uint32_t i=0;i<count && spare_columns;++i){
+            float u=read_float(input+i*stride+16);
+            spare_columns=u>=0.937f && u<=1.0005f;
+        }
+        int paper_border=count==4 && fabsf(min_y-1024)<=0.5f && min_x>=-2 && max_x<=1922 &&
+                         (fabsf(max_y-1080)<=0.5f || (max_y>1080 && max_y<=1088.5f && spare_columns));
         background=caller==0x229a9e &&
                    (((background || overscan) && min_y<=2 && max_y>=1024 && max_y-min_y<=4096) ||
                     centred || paper_border);

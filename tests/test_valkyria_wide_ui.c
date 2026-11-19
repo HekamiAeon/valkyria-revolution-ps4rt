@@ -706,11 +706,52 @@ static void test_paper_layer(void) {
             invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));
             memcpy(source,saved,sizeof(source));
         }
+        /* The squad menu's map is the same paper with the whole 64-row slice as its border, 8
+           rows past the bottom edge, as read at 5120x1440 in two splits: x 0..1024 (u
+           0.9375..0.967773, v 0..1) and 1024..1920 (u 0.96875..1, v 0..0.875), or x 0..960 (u
+           0.937988..0.968262, v 0.0625..1) and 960..1920 (u 0.96875..1, v 0..0.9375), each by
+           y 1024..1088 with the higher u on the upper edge. Both pieces stretch with the
+           paper and meet; the same quad sampling anything but the spare columns, or ending
+           past the slice, stays in the centred 16:9 area. */
+        const float squad[4][6]={{0,1024,.9375f,.967773f,0,1},{1024,1920,.96875f,1,0,.875f},
+                                 {0,960,.937988f,.968262f,.0625f,1},{960,1920,.96875f,1,0,.9375f}};
+        float reach[4];
+        for(unsigned q=0;q<4;++q){
+            const float *b=squad[q];
+            const float bx[]={b[0],b[1],b[0],b[1]},by[]={1024,1024,1088,1088};
+            for(unsigned i=0;i<4;++i){
+                unsigned char *v=source+i*24;
+                write_float(v,bx[i]);write_float(v+4,by[i]);write_float(v+8,-10);memset(v+12,0xff,4);
+                write_float(v+16,i<2?b[3]:b[2]);write_float(v+20,i&1?b[5]:b[4]);
+            }
+            memcpy(saved,source,sizeof(source));
+            invoke(source,4);assert(!memcmp(source,saved,sizeof(source)));
+            for(unsigned i=0;i<4;++i){
+                assert(close_to(read_float(captured+i*24),bx[i]*canvas_stretch(k)));
+                assert(!memcmp(captured+i*24+4,source+i*24+4,20));
+            }
+            reach[q]=read_float(captured+24);
+            for(unsigned i=0;i<4;++i)write_float(source+i*24+16,i<2?.25f:.2f);
+            invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));
+            memcpy(source,saved,sizeof(source));write_float(source+16,.93f);
+            invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));
+            memcpy(source,saved,sizeof(source));
+            write_float(source+2*24+4,1096);write_float(source+3*24+4,1096);
+            invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));
+            memcpy(source,saved,sizeof(source));
+            write_float(source+4,1016);write_float(source+24+4,1016);
+            invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));
+            memcpy(source,saved,sizeof(source));
+            test_caller=0x4a4c59;invoke(source,4);assert(close_to(read_float(captured),bx[0]+canvas_dx(k)));test_caller=0x229a9e;
+            test_offscreen=1;invoke(source,4);assert(!memcmp(captured,source,96));test_offscreen=0;
+        }
+        for(unsigned q=1;q<4;q+=2)assert(fabsf(reach[q]*test_project_scale-canvas_widths[k])<0.01f);
+        memcpy(source,saved,sizeof(source));
     }
     test_project_width=1920;test_project_height=1080;test_project_scale=1;
     invoke(source,4);assert(!memcmp(captured,source,96));
     test_project_width=3840;test_project_height=1080;test_project_scale=1;
-    puts("PASS: narration paper layer (1920x1024 from the top) and its 960x56 border halves below fill every wide canvas width with Y/UV/colour/depth/input preserved; short/lowered/partial/caller/off-screen/16:9 exclusions, bottom quads off the paper edge stay 16:9");
+    puts("PASS: paper layers (1920x1024 from the top) and their borders below, to the bottom edge or the whole 64-row slice past it, fill every wide canvas width with Y/UV/colour/depth/input preserved; short/lowered/partial/caller/off-screen/16:9 exclusions, bottom quads off the paper edge stay 16:9");
 }
 /* A talk-portrait panel as observed: authored x0..x0+600 by 0..1080, u 0.1875..0.8125 of the
    half-screen face target (mirrored when flip). */
