@@ -1,7 +1,7 @@
-# Valkyria Revolution — PS4RT for PC Linux Port
+# Valkyria Revolution (PS4, CUSA06810): PS4RT for PC Linux Port
 
-An experimental, game-specific Linux compatibility runtime for **Valkyria Revolution**
-(PlayStation 4, **CUSA06810**), currently tested on **Fedora 44, x86-64**.
+A game-specific Linux compatibility runtime for **Valkyria Revolution**
+(PlayStation 4, **CUSA06810**), tested on **Fedora Linux, x86-64**.
 
 PS4RT prepares and runs the game's original x86-64 code on a Linux host, supplies
 compatibility implementations of the PS4 services it needs, and uses a Vulkan
@@ -9,175 +9,212 @@ graphics renderer derived from shadPS4. This is **not a general-purpose PS4
 emulator**, a native recreation of the game, or a replacement for owning the
 game.
 
-**No game files, firmware, or decryption tools are supplied.** You must provide
-your own extracted, plaintext CUSA06810 game folder. The launcher does not
-download games, decrypt encrypted packages, or connect to PSN. This project is
-not affiliated with Sega, Sony, or AMD.
+<p align="center">
+  <img src="docs/images/readme/gameplay.png" alt="Valkyria Revolution running on Linux with PS4RT" width="900">
+</p>
 
-![Valkyria Revolution running on Linux with PS4RT](docs/images/readme/gameplay.png)
+**No game files, firmware, PKGs, decryption keys, or saves are supplied.** You
+must provide your own extracted, plaintext **CUSA06810** game folder. The
+portable does not download games or connect to PSN. This project is not
+affiliated with Sega, Sony, or AMD.
 
 ## Download and play (no compiling required)
 
-**Want to play? Download the prebuilt Linux release. No compilation, Podman, or separate FFmpeg/SDL3 installation required.**
+**Want to play? Use the prebuilt Linux release. You do not need to compile
+PS4RT or install FFmpeg, SDL3, or other bundled application libraries.**
 
-1. **Download:** Open the [latest GitHub release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.2) and download **`valkyria-revolution-linux-x86_64-d29d542.tar.gz`**. The separately named **`valkyria-revolution-source-d29d542.tar.gz`** archive is for developers. v1.2 supersedes v1.1; earlier versions remain available for rollback.
-2. **Prepare your own game:** Supply an extracted, plaintext `CUSA06810` folder with `sce_sys/param.sfo`, `eboot.bin`, required modules and game data. Point to the `CUSA06810` folder itself, **not** a PKG, the parent directory or the executable.
-3. **Extract the player archive** with your file manager, then open a terminal inside its extracted folder. On the first launch, supply your extracted game path:
+1. **Download v1.3:** Use the [Valkyria Revolution PS4RT v1.3 release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/tag/v1.3) (also the [latest release](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/releases/latest)). Download **`valkyria-revolution-linux-x86_64-a901bd2.tar.gz`** to play; the `source` archive is for developers. The superseded v1.0 release remains available for rollback.
+2. **Have your own extracted PS4 game:** The launcher needs a plaintext **`CUSA06810` folder** containing `sce_sys/param.sfo`, `eboot.bin`, `sce_module/`, and the game's data. Point to **the CUSA06810 folder itself**, not a PKG, its parent folder, or `eboot.bin`.
+3. **Extract the downloaded archive** using your file manager. Open a terminal inside its extracted folder.
+4. **Launch** with the path to your extracted `CUSA06810` folder:
 
 ```bash
 bash Play-Game.sh --game "/path/to/CUSA06810"
 ```
 
-On later launches, the validated game folder is remembered, so run `bash Play-Game.sh` without an argument. Explicit `--game` always takes priority and updates the remembered location. 
+**After a successful first setup**, the validated game folder is remembered in `~/.local/share/valkyria-revolution/`. For future launches, simply run `bash Play-Game.sh`. Supply `--game` again if you move the extracted folder or want to select a different copy. The `Play-Valkyria.sh` command from previous versions remains as an alias for existing shortcuts.
 
-the shortcut command `Play-Valkyria.sh` from previous versions remains as a compatibility alias for existing shortcuts.
+**That's all you need to begin setup.** Keep the extracted release folder
+together. Paths containing spaces must be inside quotes, as shown. The first
+run prepares the game's working files in `~/.local/share/valkyria-revolution/`;
+your extracted game folder is read, not modified.
 
-**That's it.** There is no `LD_LIBRARY_PATH` setup, and no need to compile the game.
+**Graphics are controlled in-game.** Hold **L2** and click the right stick
+(**R3**) to open PS4RT settings, or press **Insert** on a keyboard. Use the
+D-pad to navigate, Cross to confirm, and Circle to go back. Choose output
+**Internal resolution** (16:9 or experimental ultrawide), **FSR Upscale
+output**, upscaling (**Off, FSR 1, FSR 3.1, or FSR 4 v07**, where supported),
+sharpening, anisotropic filtering, and the Valkyria-specific options below.
 
-Leave the extracted release folder together. Your game extraction is read
-rather than overwritten; the first launch creates local working data. Quote
-game paths containing spaces. If no valid game folder has been supplied or
-remembered, the launcher prints an example `--game` command and exits. No
-graphical folder picker or Tkinter installation is needed.
+**Internal resolution and FSR output are separate settings.** The game's scene
+can render at 1024×576 (low-end "540p"), 1280×720, 1920×1080, 2560×1440,
+or 3840×2160, plus experimental **21:9, 24:9, and 32:9** modes up to
+5120×1440. **Changing internal resolution requires restarting.** FSR output
+is selected separately, within the same aspect-ratio family; choosing a
+higher output does not change how many pixels the game renders internally.
+FSR 1 is lightweight spatial upscaling without temporal anti-aliasing; FSR 3.1
+and FSR 4 v07 use temporal reconstruction. FSR and its output selection apply
+live where supported.
 
-**Graphics are controlled in-game.** Press **Insert**, or hold **L2** and click
-**R3**. The illustrated wine-red overlay offers Windowed / Borderless /
-Fullscreen, 1080p / 1440p / 4K, Off / FSR 3.1 / FSR 4 v07 (when supported),
-sharpening and anisotropic filtering. D-pad navigates, Cross confirms and
-Circle cancels. No FSR or resolution arguments are required to launch.
-Only anisotropic filtering needs a game restart; display mode, output
-resolution, FSR and sharpening apply live.
+**Changing anisotropic filtering (AF) or graphics quality requires restarting
+the game.** Use **Restart Game** in the PS4RT overlay after saving progress.
 
-**Prebuilt requirements:** Linux x86-64 with **glibc 2.35 or later**, Python 3,
-a Vulkan loader, a working Vulkan driver and compatible system display/audio
-libraries. The release includes twelve audited application shared libraries
-under `lib/`, including SDL3, FFmpeg 8.0.3, fmt, xxHash, Zydis, zlib,
-libstdc++, and libgcc_s. The graphics driver, Vulkan loader, glibc and
-remaining system integration libraries are **not** bundled. No separate
-installation of the twelve included libraries or `LD_LIBRARY_PATH` setup
-is required. The portable rebuild and extracted release archive were
-gameplay-tested on Fedora; other distributions, including SteamOS, remain
-unverified. glibc compatibility alone does not guarantee every distro works.
+**Player requirements:** x86-64 Linux with glibc **2.35 or newer**, Python 3,
+a working Vulkan loader/driver (Vulkan 1.3), and compatible host display/input
+libraries. Required application libraries, including SDL3 and FFmpeg, are
+bundled. No compiler or special `LD_LIBRARY_PATH` command is needed. Fedora
+gameplay has been verified; other Linux distributions and hardware
+combinations are not all validated.
 
-See [Running on Linux](docs/RUNNING_LINUX.md) for controls and game-file setup;
-the archive never includes the PS4 game or firmware.
+**Architecture support:** The portable targets native **x86-64/AMD64** CPUs.
+ARM64 devices and CPU translation layers such as FEX or Box64 are **not
+supported or validated**.
 
-**Architecture support:** The prebuilt runtime targets **native x86-64 (AMD64) CPUs only**. ARM64 devices, including Snapdragon-based handhelds using FEX or Box64, are **unsupported and untested**. An x86-to-ARM translation layer might launch the program, but stable gameplay is not guaranteed, even on an otherwise compatible Linux distribution.
+For more help, see [Running on Linux](docs/RUNNING_LINUX.md). The release
+does **not** contain PS4 game files or firmware.
 
 ## Current status
 
-**Experimental, playable in the tested opening sections; not a verified full
-playthrough.** Tested on **Fedora 44** with an **AMD Ryzen 7 9700X** CPU and
-**NVIDIA GeForce RTX 3080 Ti** GPU: introduction, cinematics, subtitles, audio,
-controller input, menus, early combat, first boss, initial save/load, and 4K
-output with FSR 4 v07. The newer portable release pipeline also passed
-boot/gameplay and overlay smoke testing on an AMD-based Fedora system.
-Other Linux distributions remain unverified.
+- SDL-compatible gamepads, including DualSense and XInput, plus keyboard
+  controls.
+- **Internal resolution:** 1024×576, 720p, 1080p, 1440p, and native 4K,
+  plus experimental **21:9 (2560×1080, 3440×1440), 24:9 (3840×1440),
+  and 32:9 (3840×1080, 5120×1440)**. A change requires restarting the game.
+- **FSR Upscale output:** Select the output separately from internal resolution;
+  only compatible same-aspect outputs are offered. Upscaling options are **Off,
+  FSR 1, FSR 3.1, and FSR 4 v07** (GPU support permitting). Higher output
+  resolutions do not necessarily mean the scene is rendered at that size.
+- **Graphics quality (v1.3):** **Max (original)** preserves the game's effects; **High** draws lower-resolution shadows. **Low** disables shadows. A change requires restarting the game.
+- **Anisotropic filtering:** Game default, 2×, 4×, 8×, or 16×. AF is separate
+  from anti-aliasing and requires restarting the game.
+- **Custom Valkyria Revolution PS4RT overlay**, with artwork and menu sounds.
+  Open using **Insert** or **L2 + R3 click**. Settings are saved when the
+  overlay closes.
+- **60 FPS patch:** Valkyria Revolution does not provide a simple
+  framerate-unlock toggle. Its 30 FPS assumptions are spread throughout the
+  game logic. PS4RT contains numerous game-specific fixes for movement,
+  timing, cameras, and effects to make 60 FPS playable.
+  The mode is believed to be largely functional, but
+  chapters beyond those tested may still expose timing or visual defects.
+  **30 FPS remains the default.** If something looks or behaves incorrectly
+  at 60 FPS, reproduce it at **30 FPS** before reporting it, and mention
+  whether it disappears. Late-game reports are particularly appreciated.
+- **Restart Game:** Closes the current running game and launches it again
+  through the PS4RT launcher.
+- **Local achievements:** Game-triggered trophies are saved locally and shown
+  in the **Achievements** tab with icons, progress, hidden entries, unlock
+  timestamps, and notifications. These are **not synced with PSN**; objectives
+  completed before the feature was added will not unlock retroactively.
+- **Ultrawide:** The 21:9, 24:9, and 32:9 modes widen the rendered scene but
+  remain **experimental**. Some HUD, dialogue, and cutscene elements may retain
+  16:9 layout assumptions. Return to 16:9 when investigating visual defects.
 
-- SDL-compatible gamepads, including DualSense and XInput, plus keyboard controls.
-- Output at 1080p, 1440p, or 4K; FSR 3.1, optional FSR 4 v07, and sharpening.
-- **Anti-aliasing (AA)** is provided by FSR 3.1 or FSR 4 v07 reconstruction.
-  At 1080p, the FSR quality preset is Native AA.
-- **Anisotropic filtering (AF)** is separate from AA: select Game default,
-  2×, 4×, 8×, or 16× to improve texture detail at an angle. AF changes apply
-  after restarting the game. Sharpening is a separate image adjustment.
-- In-game PS4RT graphics menu: press **Insert**, or hold **L2 + R3 click**.
-  Navigate with the D-pad, confirm with Cross, and go back with Circle.
-- **Restart Game** in the graphics menu asks for confirmation before restarting. Save progress first; restarting does not create a game save.
-- **Exit Game** in the graphics menu asks for confirmation, then exits to the
-  Linux desktop using the normal window-close path. Save in-game progress first;
-  this does not trigger a game save.
-- The game renders internally at **1920×1080**. Higher output resolutions are
-  reconstructed, **not native 4K rendering**. At 1080p FSR uses Native AA; 1440p
-  uses a custom 1.33× ratio; 4K uses Performance scaling.
-- Original frame-rate behavior is retained. No 60 FPS patch or frame generation.
-- PSN features are unavailable; tested online menu actions returned without a crash.
 
-FSR 3.1 is built in and is the fresh-configuration default. The FSR 4 **v07**
-shader/model assets and their MIT notice are included in `fsr4_shaders/`; hashes
-and provenance are recorded in `packaging/fsr4-v07-assets.json`. FSR 4 requires
-compatible Vulkan GPU features and otherwise falls back to FSR 3.1. This is
-**not FSR 4.1.1**.
+FSR 1 (spatial) and FSR 3.1 (temporal) are available in the runtime. FSR 4
+v07 assets and their license notice are included under `fsr4_shaders/`.
+FSR 4 requires appropriate Vulkan GPU features, including INT8 dot-product
+support; unsupported hardware can use **FSR 3.1, FSR 1, or Off** instead.
+These assets are upscaler dependencies, not shaders extracted from the game.
+
+### Known limitations and bug reports
+
+- **Chapters 5 onward are not fully verified.**
+- **DrawPipeline is unsupported and off by default.** Enabling it may help
+  CPU-limited systems but can cause flickering or missing UI/fade draws.
+  Bug reports must reproduce with DrawPipeline off. To experiment:
+
+```bash
+PS4RT_DRAW_PIPE=1 bash Play-Game.sh --game "/path/to/CUSA06810"
+```
+
+Disable it again with `PS4RT_DRAW_PIPE=0` or leave the variable unset.
+Please use [GitHub Issues](https://github.com/HekamiAeon/valkyria-revolution-ps4rt/issues)
+for reports. For a potential 60 FPS defect, include the chapter/scene,
+your graphics settings, and the result at 30 FPS.
 
 ## Build from source (developers only)
 
 **Downloaded the prebuilt Linux release? Skip this section.** The commands
-below are only for contributors who want to compile PS4RT.
+below are for contributors. Players should use `Play-Game.sh` as shown
+above.
 
-Install a C/C++ toolchain, CMake, Ninja, pkg-config, Python 3, and development
-packages for Vulkan, SDL3, FFmpeg, fmt, Boost, xxhash, robin-map, Vulkan Memory
-Allocator, Zydis, glslang, and X11. Third-party sources needed by the build
-are vendored in this repository.
-
-From the source checkout's root, the traditional native source build is:
+From a source checkout, install a C/C++ toolchain, CMake 3.24+, Ninja,
+pkg-config, Python 3, glslang, and development packages for Vulkan, SDL3,
+FFmpeg, X11, fmt, Boost, xxHash, robin-map, Zydis, and other source
+dependencies. Exact package names vary by distribution.
 
 ```bash
 PS4RT_LTO=OFF bash build.sh --test
-python3 scripts/valkyria_launch.py --game /path/to/your/CUSA06810
+python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810"
 ```
 
-For the tested **portable release builder**, use the Ubuntu 22.04 / GCC 14
-Podman toolchain instead. It produces a glibc 2.35-compatible, relocatable
-runtime without changing game source files or the user's private saves.
-See [portable build instructions](packaging/linux/README.md) for the image
-recipes, audit, and packaging commands. Players do **not** need Podman.
+The test build runs automated tests, not a full playthrough. Source builds
+create generated runtime data under `out/valkyria/`.
+
+To create the portable Linux release using the controlled Ubuntu 22.04 /
+GCC 14 / glibc 2.35 builder, see [Linux portable build instructions](packaging/linux/README.md)
+and the [distribution guide](docs/DISTRIBUTING_LINUX.md).
 
 ### Keyboard and controller remapping
 
-Default keyboard controls include **WASD** (left stick), **arrow keys** (right
-stick), **Space** (Cross), **Left Shift** (Circle), **E** (Square), **Q**
-(Triangle), and **I/J/K/L** (D-pad). You can remap PS4 buttons at launch
-using `PS4RT_KEY_MAP` without changing source code or recompiling:
+Default keyboard controls include **WASD** (left stick), **arrow keys**
+(right stick), **Space** (Cross), **Left Shift** (Circle), **E** (Square),
+**Q** (Triangle), and **I/J/K/L** (D-pad).
+
+You can remap PS4 buttons at launch using `PS4RT_KEY_MAP`:
 
 ```bash
-PS4RT_KEY_MAP="cross=Q,triangle=Space" \
-  python3 scripts/valkyria_launch.py --game /path/to/your/CUSA06810
+PS4RT_KEY_MAP="cross=Q,triangle=Space" python3 scripts/valkyria_launch.py --game "/path/to/CUSA06810"
 ```
 
-For the prebuilt archive, use the same variable before
-`bash Play-Game.sh --game /path/to/your/CUSA06810`.
-`PS4RT_PAD_MAP` similarly remaps gamepad buttons. These are launch-time
-environment variables, **not keys in `valkyria.ini`**; there is currently no
-in-game key-binding editor. Default mappings and keyboard stick axes are
-defined in [`src/runtime_pad.c`](src/runtime_pad.c). Button maps do not
-remap the analog stick axes or PS4RT menu shortcut.
-
-See [Running on Linux](docs/RUNNING_LINUX.md) for the full default keyboard
-layout, remapping syntax, and controls. For system dependencies, packaging,
-and known limitations, see
-[Linux distribution guide](docs/DISTRIBUTING_LINUX.md).
+`PS4RT_PAD_MAP` similarly remaps gamepad buttons. These are environment
+variables, **not settings in `valkyria.ini`**. There is no in-game
+key-binding editor. The mapping defaults live in
+[`src/runtime_pad.c`](src/runtime_pad.c), and these remaps do not change
+analog axes or the PS4RT menu shortcut.
 
 ### Saves and private files
 
-A source checkout stores generated game code, settings, saves, and GPU caches
-under `out/valkyria/`. The packaged launcher uses
-`${XDG_DATA_HOME:-~/.local/share}/valkyria-revolution/` by default.
-Pass `--data-dir /your/private/path` to use a different directory.
+The extracted portable keeps generated game code, settings, saves, and GPU
+caches under `~/.local/share/valkyria-revolution/`; a source checkout uses
+`out/valkyria/`. Notable paths:
 
-**Never publish these data directories:** generated executables and linked code
-still contain proprietary game material. No such content belongs in the
-repository or release archives.
+- `~/.local/share/valkyria-revolution/valkyria.ini`: saved graphics settings.
+- `~/.local/share/valkyria-revolution/user/savedata/`: user save data.
+- `~/.local/share/valkyria-revolution/user/achievements/`: local unlock state
+  and generated trophy catalog.
+- `~/.local/share/valkyria-revolution/user/gpu/cache/`: GPU shader/pipeline
+  caches, when present.
+
+**Never publish these folders.** They can contain game-derived binaries,
+private saves, and caches. No proprietary game material or
+user data belongs in source control or public player archives.
 
 ## Credits, origins, and license
 
-This Valkyria-specific project is **adapted open-source compatibility software**,
-not a clean-room implementation. Its runtime builds on work from:
+This Valkyria Revolution-specific project is **adapted open-source compatibility
+software**, not a clean-room implementation. Its runtime builds on work
+from:
 
-- [FelipePrado0/gow3_pc](https://github.com/FelipePrado0/gow3_pc), the
-  God of War III compatibility-runtime project from which this port was adapted.
+- [FelipePrado0/gow3_pc](https://github.com/FelipePrado0/gow3_pc),
+  the original PS4 compatibility-runtime lineage.
 - [deadinside28/bloodborne_pc](https://github.com/deadinside28/bloodborne_pc)
   and [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc),
-  earlier Bloodborne PC runtime and launcher lineage.
+  earlier compatibility-runtime and launcher adaptations.
 - [shadPS4](https://github.com/shadps4-emu/shadPS4) and related Vulkan
-  renderer contributors.
+  renderer and shader-recompiler contributors.
 
-Development also used [REA: Reverse Engineer Anything](https://github.com/morluto/rea)
+Development used [REA: Reverse Engineer Anything](https://github.com/morluto/rea)
 and [Ghidra](https://github.com/NationalSecurityAgency/ghidra) as
-reverse-engineering **analysis tools**, not as embedded runtime code.
+reverse-engineering analysis tools, not embedded runtime code.
 
-See [Upstream credits and notices](docs/UPSTREAM_CREDITS.md) for additional
-contributors, source provenance, and third-party licenses. Original authors'
-copyright and license notices remain in the source tree. The project's
-runtime source is distributed under **GPL-2.0-or-later**; vendored components
-retain their respective terms. A separate project name and fresh Git history
-do not change those obligations.
+See [Upstream credits and notices](docs/UPSTREAM_CREDITS.md) for
+additional contributors and third-party licenses. The runtime source is
+distributed under **GPL-2.0-or-later**; vendored components retain their
+own licenses and attribution. The FSR 4 assets have a separate notice at
+[fsr4_shaders/LICENSE-FSR4-v07.txt](fsr4_shaders/LICENSE-FSR4-v07.txt).
+A separate repository name or Git history does not remove obligations
+to upstream contributors.
+
+Valkyria Revolution is a trademark of its respective owners. This project is
+not affiliated with or endorsed by them.
