@@ -214,6 +214,43 @@ int main() {
     }
     Ps4RtSettings::Load(true);
     assert(!v.sixty_fps && v.frame_rate_patches && Ps4RtSettings::SixtyFpsLive());
+    // Graphics quality: Max (the game's own) unless High or Low is chosen, saved for Valkyria
+    // by name. Startup patches, so a change asks for a restart and the next launch starts
+    // with it. A file without the key, or with an unknown name, is Max.
+    namespace G = Ps4RtGraphics;
+    assert(v.graphics_quality == G::QualityMax && v.startup_graphics_quality == G::QualityMax);
+    assert(!v.graphics_quality_problem && !Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    assert(Read(path).find("frame_rate_patches=1\ngraphics_quality=max\n") != std::string::npos);
+    v.graphics_quality = G::QualityLow;
+    assert(Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    assert(Read(path).find("graphics_quality=low\n") != std::string::npos);
+    Ps4RtSettings::Load(true);
+    assert(v.graphics_quality == G::QualityLow && v.startup_graphics_quality == G::QualityLow);
+    assert(!Ps4RtSettings::GraphicsNeedRestart());
+    v.graphics_quality = G::QualityHigh;
+    assert(Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    assert(Read(path).find("graphics_quality=high\n") != std::string::npos);
+    v.graphics_quality = G::QualityLow; // back to what the launch began with: no restart
+    assert(!Ps4RtSettings::GraphicsNeedRestart());
+    {
+        std::ofstream out(path);
+        out << "graphics_quality=ultra\n";
+    }
+    Ps4RtSettings::Load(true);
+    assert(v.graphics_quality == G::QualityMax && v.startup_graphics_quality == G::QualityMax);
+    Env("VALKYRIA_QUALITY", "high");
+    Ps4RtSettings::Load(true);
+    assert(v.graphics_quality == G::QualityHigh && v.startup_graphics_quality == G::QualityHigh);
+    Env("VALKYRIA_QUALITY", "");
+    {
+        std::ofstream out(path);
+        out << "experimental_60fps=0\n";
+    }
+    Ps4RtSettings::Load(true);
+    assert(v.graphics_quality == G::QualityMax && !Ps4RtSettings::GraphicsNeedRestart());
 
     // A new render resolution is an attempt: marked in the file before the launch tries it, and
     // undone by the next launch when that one never reached the game.

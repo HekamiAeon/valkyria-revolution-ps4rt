@@ -434,6 +434,10 @@ void ValkyriaGraphics() {
             InfoRow("Engine frame rate", s.sixty_fps_problem ? "30 (60 could not start this launch)"
                                                              : "30 (frame rate patches are off in the settings file)");
         }
+        ChoiceRow("Graphics quality", s.graphics_quality, Ps4RtGraphics::QualityNames.data(), nullptr,
+                  Ps4RtGraphics::QualityCount,
+                  "For slower GPUs. High draws lower resolution shadows and Low none: about 10% and 25% "
+                  "faster in battle on integrated graphics. Applies after restarting the game.");
         Row("Sharpening");
         int strength = s.sharpen ? int(s.sharpness * 100.0f + 0.5f) : 0;
         if (ImGui::SliderInt("##value", &strength, 0, 100, "%d%%")) {
@@ -459,6 +463,10 @@ void ValkyriaGraphics() {
             ImGui::TextDisabled("Anisotropic filtering changes require a game restart.");
         if (const char* problem = s.sixty_fps_problem)
             ImGui::TextWrapped("60 FPS could not start this launch (%s); running at the original 30.", problem);
+        if (s.graphics_quality != s.startup_graphics_quality)
+            ImGui::TextWrapped("Restart the game to apply the selected graphics quality.");
+        if (const char* problem = s.graphics_quality_problem)
+            ImGui::TextWrapped("The selected graphics quality could not start this launch (%s); running at Max.", problem);
         if (!s.fsr4_supported) ImGui::TextWrapped("FSR 4 v07 requires GPU features unavailable on this device. FSR 3.1 remains available.");
         if (const char* problem = s.fsr4_problem.load()) ImGui::TextWrapped("%s", problem);
     }

@@ -290,6 +290,13 @@ target_compile_options(valkyria-frame-rate-test PRIVATE -UNDEBUG -Wall -Wextra -
     -Wno-misleading-indentation)
 target_include_directories(valkyria-frame-rate-test PRIVATE ..)
 target_link_libraries(valkyria-frame-rate-test PRIVATE dl m)
+# Valkyria graphics quality startup patches on a synthetic image (no game data).
+add_executable(valkyria-quality-test EXCLUDE_FROM_ALL ../tests/test_valkyria_quality.cpp
+    shim/valkyria_quality.cpp shim/valkyria_wide_patches.cpp shim/valkyria_wide_ui.c)
+target_compile_options(valkyria-quality-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+    -Wno-misleading-indentation)
+target_include_directories(valkyria-quality-test PRIVATE ..)
+target_link_libraries(valkyria-quality-test PRIVATE dl m)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)

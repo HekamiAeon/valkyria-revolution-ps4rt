@@ -71,6 +71,17 @@ inline int ParseEngineFps(int value) {
     return IndexOf(EngineFps, value, -1) >= 0 ? value : 120;
 }
 
+/// Valkyria graphics quality (valkyria_quality.h), applied on restart. Max is the game's own
+/// rendering; High draws its shadow maps at their smallest size and Low draws none, for slow
+/// GPUs.
+enum Quality : int { QualityMax = 0, QualityHigh = 1, QualityLow = 2, QualityCount };
+inline constexpr std::array<std::string_view, QualityCount> QualityKeys = {"max", "high", "low"};
+inline constexpr std::array<const char*, QualityCount> QualityNames = {"Max (original)", "High", "Low"};
+/// Index into QualityKeys; unknown text is Max.
+inline int ParseQuality(std::string_view text) {
+    return IndexOf(QualityKeys, text, int(QualityMax));
+}
+
 /// Anisotropic filtering forced on the game's mipmapped textures; 0 = the game's own. Samplers
 /// are cached, so it applies on restart.
 inline constexpr std::array<int, 5> Anisotropies = {0, 2, 4, 8, 16};

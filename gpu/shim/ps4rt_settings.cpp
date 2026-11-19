@@ -118,6 +118,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.sixty_fps = v.valkyria && i != 0;
     } else if (key == "frame_rate_patches") {
         v.frame_rate_patches = i != 0;
+    } else if (key == "graphics_quality") {
+        v.graphics_quality = v.valkyria ? Ps4RtGraphics::ParseQuality(value) : int(Ps4RtGraphics::QualityMax);
     } else if (key == "anisotropy") {
         v.anisotropy = Ps4RtGraphics::ParseAnisotropy(i);
     } else if (key == "vibration") {
@@ -162,6 +164,7 @@ void Load(bool valkyria) {
         v.rcas_strength = 35;
         v.output_res = 3; // 3840x2160 (2x from the game's own 1080p), independent of monitor.
         v.frame_rate_patches = true;
+        v.graphics_quality = Ps4RtGraphics::QualityMax;
     }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -205,6 +208,7 @@ void Load(bool valkyria) {
         {"PS4RT_RCAS", "rcas"},                        {"PS4RT_FRAMES_AHEAD", "frames_queued"},
         {"PS4RT_ANISOTROPY", "anisotropy"},            {"PS4RT_VIBRATION", "vibration"},
         {"VALKYRIA_AA", "spatial_aa"},                 {"VALKYRIA_60FPS", "experimental_60fps"},
+        {"VALKYRIA_QUALITY", "graphics_quality"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env); value && value[0]) {
@@ -256,6 +260,7 @@ void Load(bool valkyria) {
     v.startup_stale_readback = v.stale_readback;
     v.startup_anisotropy = v.anisotropy;
     v.startup_sixty_fps = v.sixty_fps;
+    v.startup_graphics_quality = v.graphics_quality;
     if (save) Save();
 }
 
@@ -265,7 +270,8 @@ bool GraphicsNeedRestart() {
            v.engine_fps != v.startup_engine_fps ||
            v.deferred_readback != v.startup_deferred_readback ||
            v.stale_readback != v.startup_stale_readback ||
-           v.anisotropy != v.startup_anisotropy;
+           v.anisotropy != v.startup_anisotropy ||
+           v.graphics_quality != v.startup_graphics_quality;
 }
 
 void ActivateCanvas(int width, int height) {
@@ -453,8 +459,10 @@ void Save() {
     std::fprintf(file, "anisotropy=%d\nvibration=%d\n", v.anisotropy.load(), v.vibration.load());
     std::fprintf(file, "spatial_aa=%d\n", int(v.spatial_aa.load()));
     if (v.valkyria)
-        std::fprintf(file, "experimental_60fps=%d\nframe_rate_patches=%d\n", int(v.sixty_fps.load()),
-                     int(v.frame_rate_patches));
+        std::fprintf(file, "experimental_60fps=%d\nframe_rate_patches=%d\ngraphics_quality=%s\n",
+                     int(v.sixty_fps.load()), int(v.frame_rate_patches),
+                     Ps4RtGraphics::QualityKeys[std::clamp(v.graphics_quality.load(), 0,
+                                                           int(Ps4RtGraphics::QualityCount) - 1)].data());
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");

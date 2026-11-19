@@ -105,6 +105,13 @@ struct Values {
     bool frame_rate_patches = true;
     /// Why the option did not start (this launch runs at the game's 30), or null.
     const char* sixty_fps_problem = nullptr;
+    /// Valkyria graphics quality (Ps4RtGraphics::Quality, valkyria_quality.h): High and Low
+    /// reduce the game's shadows for slow GPUs. Startup patches, so a change applies at the
+    /// next launch; startup_graphics_quality is what this launch began with.
+    std::atomic<int> graphics_quality{0};
+    int startup_graphics_quality = 0;
+    /// Why the selected quality did not start (this launch runs at Max), or null.
+    const char* graphics_quality_problem = nullptr;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};

@@ -5,6 +5,7 @@
 #include "ps4rt_graphics.h"
 #include "ps4rt_settings.h"
 #include "valkyria_frame_rate.h"
+#include "valkyria_quality.h"
 #include "valkyria_wide_patches.h"
 #include "ps4rt_copy.h"
 #ifndef _WIN32
@@ -259,6 +260,15 @@ extern "C" int ps4rtgpu_init(const Ps4RtGpuConfig* config) {
             }
         } else {
             std::puts("Valkyria engine frame rate: patches switched off (frame_rate_patches=0); the unmodified game at 30");
+        }
+        // Graphics quality: High and Low reduce the game's shadows with startup patches, all
+        // or nothing; anything unexpected leaves this launch the game's own Max.
+        {
+            static std::string problem;
+            if (!ValkyriaQuality::Start(ValkyriaWidePatches::GuestBase, settings.startup_graphics_quality, &problem)) {
+                std::printf("Valkyria graphics quality: unavailable (%s); running at Max\n", problem.c_str());
+                settings.graphics_quality_problem = problem.c_str();
+            }
         }
     }
 #ifdef PS4RT_PGO_GENERATE
