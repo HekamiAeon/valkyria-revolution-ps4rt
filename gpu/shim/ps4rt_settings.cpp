@@ -116,6 +116,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.stale_readback = i != 0;
     } else if (key == "experimental_60fps") {
         v.sixty_fps = v.valkyria && i != 0;
+    } else if (key == "frame_rate_patches") {
+        v.frame_rate_patches = i != 0;
     } else if (key == "anisotropy") {
         v.anisotropy = Ps4RtGraphics::ParseAnisotropy(i);
     } else if (key == "vibration") {
@@ -159,6 +161,7 @@ void Load(bool valkyria) {
         v.rcas = false;
         v.rcas_strength = 35;
         v.output_res = 3; // 3840x2160 (2x from the game's own 1080p), independent of monitor.
+        v.frame_rate_patches = true;
     }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -262,8 +265,7 @@ bool GraphicsNeedRestart() {
            v.engine_fps != v.startup_engine_fps ||
            v.deferred_readback != v.startup_deferred_readback ||
            v.stale_readback != v.startup_stale_readback ||
-           v.anisotropy != v.startup_anisotropy ||
-           v.sixty_fps != v.startup_sixty_fps;
+           v.anisotropy != v.startup_anisotropy;
 }
 
 void ActivateCanvas(int width, int height) {
@@ -280,6 +282,11 @@ void CanvasUnavailable(const char* problem) {
 
 void SixtyFpsUnavailable(const char* problem) {
     Get().sixty_fps_problem = problem;
+}
+
+bool SixtyFpsLive() {
+    const auto& v = Get();
+    return v.valkyria && v.frame_rate_patches && !v.sixty_fps_problem;
 }
 
 void SceneSize(int& width, int& height) {
@@ -445,7 +452,9 @@ void Save() {
                  int(v.restart_unconfirmed.load()));
     std::fprintf(file, "anisotropy=%d\nvibration=%d\n", v.anisotropy.load(), v.vibration.load());
     std::fprintf(file, "spatial_aa=%d\n", int(v.spatial_aa.load()));
-    if (v.valkyria) std::fprintf(file, "experimental_60fps=%d\n", int(v.sixty_fps.load()));
+    if (v.valkyria)
+        std::fprintf(file, "experimental_60fps=%d\nframe_rate_patches=%d\n", int(v.sixty_fps.load()),
+                     int(v.frame_rate_patches));
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");

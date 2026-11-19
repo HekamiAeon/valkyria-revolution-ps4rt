@@ -36,6 +36,7 @@ constexpr uint64_t Ticks = 0xa261e4; ///< ticks in this update, integer
 constexpr uint64_t Unit = 0xa261e8;  ///< the same as a float: the frame unit
 constexpr uint64_t Step = 0xa12fc0;  ///< ticks in this update x game speed
 constexpr uint64_t One = 0x7c53cc;   ///< the game's read-only 1.0f
+constexpr uint64_t Clock = 0xa12be8; ///< the clock's state; its first field is the minimum tick count
 /// Nine of the thirteen alignment bytes between two functions, right before the event camera
 /// update (FUN_003285a0): the helper its four patched sites call.
 constexpr uint64_t CameraHelper = 0x328593;
@@ -81,19 +82,20 @@ Bytes CallHelper(uint64_t at) {
 
 } // namespace
 
-std::vector<Write> Writes() {
+std::vector<Write> Writes(bool sixty) {
     std::vector<Write> writes;
     const auto add = [&](uint64_t at, Bytes before, Bytes after) {
         writes.push_back({at, std::move(before), std::move(after)});
     };
     const auto verify = [&](uint64_t at, const char* hex) { add(at, Hex(hex), Hex(hex)); };
 
-    // The clock. The timing state starts with a minimum of one tick (shipped: the start-up
-    // step truncated, 2) and keeps it: the scene object that puts back the tick count it was
-    // created with (FUN_0044e110) no longer stores that count as the minimum, which after a
-    // slow update would hold the game at 30.
-    add(0x3d319f, Hex("c4e1fa2c1d18fe6300"), Hex("bb010000000f1f4000")); // mov ebx,1
-    add(0x3d2fb9, Hex("c70002000000"), Hex("c70001000000"));             // mov dword [rax],1
+    // The clock. The timing state starts with the minimum of the chosen rate, one tick or two
+    // (shipped: the start-up step truncated, 2), and keeps what SetRate gives it: the scene
+    // object that puts back the tick count it was created with (FUN_0044e110) no longer stores
+    // that count as the minimum, which after a slow update would hold the game at 30.
+    add(0x3d319f, Hex("c4e1fa2c1d18fe6300"), // mov ebx,1 or 2
+        Hex(sixty ? "bb010000000f1f4000" : "bb020000000f1f4000"));
+    add(0x3d2fb9, Hex("c70002000000"), Hex(sixty ? "c70001000000" : "c70002000000")); // mov dword [rax],1 or 2
     add(0x44e1b2, Hex("8901"), Hex("6690"));
     // The frame unit keeps the 2.0 the game starts with: the clock and that scene object no
     // longer rewrite it with the tick count.
@@ -298,16 +300,25 @@ std::vector<Write> Writes() {
     return writes;
 }
 
-bool Start(uintptr_t base, std::string* problem) {
-    const std::vector<Write> writes = Writes();
+bool Start(uintptr_t base, std::string* problem, bool sixty) {
+    const std::vector<Write> writes = Writes(sixty);
     if (!ValkyriaWidePatches::Matches(base, writes, problem)) return false;
     // The camera hooks' way back into the game is the only step that can fail after the
     // check; nothing is written before it.
     if (!ValkyriaCameraCuts::Prepare(base, problem)) return false;
     ValkyriaWidePatches::Apply(base, writes);
     ValkyriaCameraCuts::Install(base);
-    std::printf("Valkyria 60 FPS (experimental): on, %zu startup patches and 2 camera hooks\n",
-                writes.size() - 2);
+    std::printf("Valkyria engine frame rate: %s, switches live; %zu startup patches and 2 camera hooks\n",
+                sixty ? "60 (experimental)" : "30", writes.size() - 2);
+    return true;
+}
+
+bool SetRate(uintptr_t base, bool sixty) {
+    // The clock reads its minimum once an update; nothing else in the patched game writes it.
+    uint32_t* const minimum = *reinterpret_cast<uint32_t* const*>(base + Clock);
+    if (!minimum) return false;
+    const uint32_t ticks = sixty ? 1 : 2;
+    if (__atomic_load_n(minimum, __ATOMIC_RELAXED) != ticks) __atomic_store_n(minimum, ticks, __ATOMIC_RELAXED);
     return true;
 }
 

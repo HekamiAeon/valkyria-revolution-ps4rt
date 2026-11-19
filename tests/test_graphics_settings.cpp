@@ -155,29 +155,65 @@ int main() {
     Ps4RtSettings::Load(true);
     assert(v.spatial_aa);
     Env("VALKYRIA_AA","");
-    // 60 FPS (experimental): off unless chosen, a startup option, saved for Valkyria.
-    assert(!v.sixty_fps && !v.startup_sixty_fps && !v.sixty_fps_problem);
+    // Engine frame rate: the game's 30 unless 60 (experimental) is chosen, saved for Valkyria.
+    // The frame rate patches load at every launch, so the choice applies at once, both ways,
+    // and never asks for a restart; the next launch starts at the saved rate.
+    assert(!v.sixty_fps && !v.startup_sixty_fps && !v.sixty_fps_problem && v.frame_rate_patches);
+    assert(Ps4RtSettings::SixtyFpsLive());
     Ps4RtSettings::Save();
-    assert(Read(path).find("experimental_60fps=0\n") != std::string::npos);
-    v.sixty_fps = true;
-    assert(Ps4RtSettings::GraphicsNeedRestart());
+    assert(Read(path).find("experimental_60fps=0\nframe_rate_patches=1\n") != std::string::npos);
+    v.sixty_fps = true; // 60 at once from a launch that started at 30
+    assert(!Ps4RtSettings::GraphicsNeedRestart() && Ps4RtSettings::SixtyFpsLive());
     Ps4RtSettings::Save();
     assert(Read(path).find("experimental_60fps=1\n") != std::string::npos);
     Ps4RtSettings::Load(true);
     assert(v.sixty_fps && v.startup_sixty_fps && !Ps4RtSettings::GraphicsNeedRestart());
-    v.sixty_fps = false; // back to the original 30 on the next launch
-    assert(Ps4RtSettings::GraphicsNeedRestart());
+    assert(Ps4RtSettings::SixtyFpsLive());
+    v.sixty_fps = false; // and 30 at once from a launch that started at 60
+    assert(!Ps4RtSettings::GraphicsNeedRestart() && Ps4RtSettings::SixtyFpsLive());
+    v.sixty_fps = true;
+    assert(!Ps4RtSettings::GraphicsNeedRestart() && Ps4RtSettings::SixtyFpsLive());
+    v.sixty_fps = false;
     Ps4RtSettings::Save();
+    assert(Read(path).find("experimental_60fps=0\n") != std::string::npos);
     Ps4RtSettings::Load(true);
-    assert(!v.sixty_fps && !v.startup_sixty_fps);
+    assert(!v.sixty_fps && !v.startup_sixty_fps && Ps4RtSettings::SixtyFpsLive());
     Env("VALKYRIA_60FPS", "1");
     Ps4RtSettings::Load(true);
     assert(v.sixty_fps && v.startup_sixty_fps);
     Env("VALKYRIA_60FPS", "");
     Ps4RtSettings::Load(true);
     assert(!v.sixty_fps && !v.startup_sixty_fps);
+    // A launch whose patches could not start is the unmodified game at 30 whatever the
+    // choice: nothing is live and no restart is asked.
+    Env("VALKYRIA_60FPS", "1");
+    Ps4RtSettings::Load(true);
+    assert(Ps4RtSettings::SixtyFpsLive());
     Ps4RtSettings::SixtyFpsUnavailable("game code differs at 0x3d319f");
-    assert(v.sixty_fps_problem);
+    assert(v.sixty_fps_problem && !Ps4RtSettings::SixtyFpsLive() && !Ps4RtSettings::GraphicsNeedRestart());
+    v.sixty_fps = false;
+    assert(!Ps4RtSettings::GraphicsNeedRestart());
+    Env("VALKYRIA_60FPS", "");
+    v.sixty_fps_problem = nullptr;
+    // frame_rate_patches=0 (settings file only) keeps the patches out: the unmodified game at
+    // 30, nothing live, and the key stays as it was written. A file without the key has them.
+    {
+        std::ofstream out(path);
+        out << "experimental_60fps=1\nframe_rate_patches=0\n";
+    }
+    Ps4RtSettings::Load(true);
+    assert(v.sixty_fps && !v.frame_rate_patches && !Ps4RtSettings::SixtyFpsLive());
+    assert(!Ps4RtSettings::GraphicsNeedRestart());
+    Ps4RtSettings::Save();
+    assert(Read(path).find("experimental_60fps=1\nframe_rate_patches=0\n") != std::string::npos);
+    Ps4RtSettings::Load(true);
+    assert(!v.frame_rate_patches);
+    {
+        std::ofstream out(path);
+        out << "experimental_60fps=0\n";
+    }
+    Ps4RtSettings::Load(true);
+    assert(!v.sixty_fps && v.frame_rate_patches && Ps4RtSettings::SixtyFpsLive());
 
     // A new render resolution is an attempt: marked in the file before the launch tries it, and
     // undone by the next launch when that one never reached the game.

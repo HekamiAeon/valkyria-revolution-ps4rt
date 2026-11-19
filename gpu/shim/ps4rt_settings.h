@@ -96,10 +96,13 @@ struct Values {
     int canvas_width = 0, canvas_height = 0;
     /// Why the selected canvas did not start (this launch runs at 1920 x 1080), or null.
     const char* canvas_problem = nullptr;
-    /// Valkyria: 60 updates a second instead of the game's 30 (valkyria_frame_rate.h;
-    /// experimental, off by default). Startup: sixty_fps is the choice for the next launch.
+    /// Valkyria engine frame rate (valkyria_frame_rate.h): 60 updates a second (experimental)
+    /// instead of the game's 30. Live while the frame rate patches are loaded (SixtyFpsLive);
+    /// startup_sixty_fps is the rate the launch began with.
     std::atomic<bool> sixty_fps{false};
     bool startup_sixty_fps = false;
+    /// Settings file only: 0 starts the unmodified game code, at 30 only.
+    bool frame_rate_patches = true;
     /// Why the option did not start (this launch runs at the game's 30), or null.
     const char* sixty_fps_problem = nullptr;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -149,6 +152,8 @@ void ActivateCanvas(int width, int height);
 void CanvasUnavailable(const char* problem);
 /// The 60 FPS option could not start (static text): this launch stays at the game's 30.
 void SixtyFpsUnavailable(const char* problem);
+/// Valkyria: this launch has the frame rate patches, so the engine frame rate switches live.
+bool SixtyFpsLive();
 /// The scene size this launch renders at: the canvas, else 1920 x 1080.
 void SceneSize(int& width, int& height);
 /// The FSR output and host image for an OutputWidths index: the output fitted to the scene

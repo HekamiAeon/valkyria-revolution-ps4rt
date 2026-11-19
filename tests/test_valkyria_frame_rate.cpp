@@ -2,8 +2,8 @@
 // Valkyria 60 FPS startup patches on a synthetic image (no game data): well-formed writes that
 // stay clear of the canvas patches, all-or-nothing verification, the rewritten fragments
 // (event camera, mouth track, subtitle window, effect loop restart, motion start) executed at
-// one and two ticks an update, and the camera clip hooks on synthetic clips: a cut keeps its
-// earlier frame.
+// one and two ticks an update, the camera clip hooks on synthetic clips (a cut keeps its
+// earlier frame), and the live rate switch on a synthetic clock.
 // Optional argument: a decrypted eboot.elf, checked read-only to match every patch's original
 // bytes.
 #include <sys/mman.h>
@@ -22,6 +22,7 @@
 #include "gpu/shim/valkyria_camera_cuts.h"
 #include "gpu/shim/valkyria_frame_rate.h"
 
+using ValkyriaFrameRate::SetRate;
 using ValkyriaFrameRate::Start;
 using ValkyriaFrameRate::Write;
 using ValkyriaFrameRate::Writes;
@@ -183,7 +184,20 @@ void TestStart() {
     // A second start finds its own bytes and changes nothing.
     assert(!Start(image.base(), &problem) && problem.rfind("game code differs at 0x", 0) == 0);
     for (const Write& write : Writes()) assert(HookSite(write) ? Hooked(image, write.at) : image.has(write, true));
-    std::puts("PASS: start writes every patch and both camera hooks; operands and calls reach their targets");
+    // A start at 30 is the same patches with the clock's minimum at two ticks: nothing else
+    // in the image differs.
+    Image thirty;
+    Stock(thirty);
+    problem.clear();
+    assert(Start(thirty.base(), &problem, false) && problem.empty());
+    assert(thirty.data[0x3d319f] == 0xbb && thirty.u(0x3d31a0) == 2 && thirty.u(0x3d2fbb) == 2);
+    for (uint64_t at : {uint64_t{0x3d31a0}, uint64_t{0x3d2fbb}}) thirty.data[at] = 1;
+    assert(std::equal(image.data, image.data + ImageSize, thirty.data));
+    const std::vector<Write> at_sixty = Writes(true), at_thirty = Writes(false);
+    assert(at_sixty.size() == at_thirty.size());
+    for (size_t i = 0; i < at_sixty.size(); ++i)
+        assert(at_sixty[i].at == at_thirty[i].at && at_sixty[i].before == at_thirty[i].before);
+    std::puts("PASS: start writes every patch and both camera hooks, at 60 or at 30; operands and calls reach their targets");
 }
 
 void TestFailClosed() {
@@ -483,6 +497,30 @@ void TestMotionStart() {
     std::puts("PASS: a motion holds its first frame for one authored frame at one tick as at two; a loop comes round on time");
 }
 
+void TestRate() {
+    constexpr uint64_t Clock = 0xa12be8; // the pointer to the clock's state
+    Image image;
+    Patched(image);
+    const std::vector<uint8_t> before(image.data, image.data + ImageSize);
+    // Before the game has made its clock there is nothing to write.
+    assert(!SetRate(image.base(), true) && !SetRate(image.base(), false));
+    assert(std::equal(before.begin(), before.end(), image.data));
+    // The clock's state starts with the minimum tick count: 1 as the patched game makes it.
+    uint32_t state[4] = {1, 0x11111111, 0x22222222, 0x33333333};
+    const uint64_t pointer = reinterpret_cast<uint64_t>(state);
+    std::memcpy(image.data + Clock, &pointer, sizeof(pointer));
+    assert(SetRate(image.base(), true) && state[0] == 1);
+    assert(SetRate(image.base(), false) && state[0] == 2 && SetRate(image.base(), false) && state[0] == 2);
+    assert(SetRate(image.base(), true) && state[0] == 1);
+    state[0] = 3; // anything else is put right too
+    assert(SetRate(image.base(), false) && state[0] == 2);
+    assert(state[1] == 0x11111111 && state[2] == 0x22222222 && state[3] == 0x33333333);
+    // Nothing else in the image changes: the patches stay as they are at either rate.
+    std::memset(image.data + Clock, 0, sizeof(pointer));
+    assert(std::equal(before.begin(), before.end(), image.data));
+    std::puts("PASS: the rate follows the clock's minimum tick count, once the game has made its clock");
+}
+
 using Pose = std::array<float, ValkyriaCameraCuts::PoseSize>;
 
 Pose Shot(float px, float py, float pz, float tx, float ty, float tz, float roll = 0) {
@@ -663,6 +701,7 @@ int main(int argc, char** argv) {
     TestSubtitleWindow();
     TestEffectLoop();
     TestMotionStart();
+    TestRate();
     TestCutRules();
     TestCameraHooks();
     if (argc > 1) {

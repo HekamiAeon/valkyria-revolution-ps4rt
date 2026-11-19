@@ -246,15 +246,19 @@ extern "C" int ps4rtgpu_init(const Ps4RtGpuConfig* config) {
                 Ps4RtSettings::CanvasUnavailable(problem.c_str());
             }
         }
-        // 60 updates a second (experimental, off unless chosen): the same all-or-nothing
-        // start; anything unexpected leaves this launch at the game's own 30.
-        if (settings.startup_sixty_fps) {
+        // The engine frame rate (the game's 30, or the experimental 60, switched in the menu
+        // while the game runs): its patches load at every launch unless the settings file
+        // switches them off, with the same all-or-nothing start; anything unexpected leaves
+        // this launch the unmodified game at its own 30.
+        if (settings.frame_rate_patches) {
             static std::string problem;
-            if (!ValkyriaFrameRate::Start(ValkyriaWidePatches::GuestBase, &problem)) {
-                std::printf("Valkyria 60 FPS (experimental): unavailable (%s); running at the game's 30\n",
+            if (!ValkyriaFrameRate::Start(ValkyriaWidePatches::GuestBase, &problem, settings.startup_sixty_fps)) {
+                std::printf("Valkyria engine frame rate: 60 unavailable (%s); running at the game's 30\n",
                             problem.c_str());
                 Ps4RtSettings::SixtyFpsUnavailable(problem.c_str());
             }
+        } else {
+            std::puts("Valkyria engine frame rate: patches switched off (frame_rate_patches=0); the unmodified game at 30");
         }
     }
 #ifdef PS4RT_PGO_GENERATE

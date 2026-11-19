@@ -22,6 +22,7 @@
 #include "ps4rt_menu_sounds.h"
 #include "ps4rt_graphics.h"
 #include "ps4rt_perf_stats.h"
+#include "valkyria_frame_rate.h"
 
 extern "C" void runtime_restart(void); // src/probe.c: starts run.py again, ends this process
 #include "common/elf_info.h"
@@ -419,15 +420,20 @@ void ValkyriaGraphics() {
         ChoiceRow("Anisotropic filtering", s.anisotropy, anisotropy_labels,
                   Ps4RtGraphics::Anisotropies.data(), int(Ps4RtGraphics::Anisotropies.size()),
                   "Sharpens textures viewed at an angle. Works with FSR. Applies after restarting the game.");
-        // A list like the other ports' engine frame rate; the choice is the sixty_fps setting.
-        static const char* const rate_labels[] = {"30 (original)", "60 (experimental)"};
-        static constexpr int rate_values[] = {30, 60};
-        std::atomic<int> rate{s.sixty_fps ? 60 : 30};
-        ChoiceRow("Engine frame rate", rate, rate_labels, rate_values, 2,
-                  "The frame rate the game itself runs at. 60 is experimental: some animations or "
-                  "timings may still differ from the original. Choose 30 to return to the original. "
-                  "Applies after restarting the game.");
-        if ((rate == 60) != s.sixty_fps) s.sixty_fps = rate == 60;
+        // A list like the other ports' frame rate; the choice is the sixty_fps setting, live.
+        if (Ps4RtSettings::SixtyFpsLive()) {
+            static const char* const rate_labels[] = {"30 (original)", "60 (experimental)"};
+            static constexpr int rate_values[] = {30, 60};
+            std::atomic<int> rate{s.sixty_fps ? 60 : 30};
+            ChoiceRow("Engine frame rate", rate, rate_labels, rate_values, 2,
+                      "The frame rate the game itself runs at; game speed stays normal. Applies live. "
+                      "60 is experimental: some animations or timings may still differ from the "
+                      "original. If something misbehaves at 60, switch back to 30.");
+            if ((rate == 60) != s.sixty_fps) s.sixty_fps = rate == 60;
+        } else {
+            InfoRow("Engine frame rate", s.sixty_fps_problem ? "30 (60 could not start this launch)"
+                                                             : "30 (frame rate patches are off in the settings file)");
+        }
         Row("Sharpening");
         int strength = s.sharpen ? int(s.sharpness * 100.0f + 0.5f) : 0;
         if (ImGui::SliderInt("##value", &strength, 0, 100, "%d%%")) {
@@ -446,14 +452,11 @@ void ValkyriaGraphics() {
             ImGui::TextWrapped("Restart the game (Restart Game below) to apply the selected internal resolution.");
         if (const char* problem = s.canvas_problem)
             ImGui::TextWrapped("The selected internal resolution could not start this launch (%s); running at 1920 x 1080.", problem);
-        ImGui::TextDisabled("Display mode, FPS counter, FSR upscale output, FSR and sharpening apply live. Choices save on close.");
+        ImGui::TextDisabled("Display mode, engine frame rate, FPS counter, FSR upscale output, FSR and sharpening apply live. Choices save on close.");
         if (s.anisotropy != s.startup_anisotropy)
             ImGui::TextWrapped("Restart the game to apply the selected anisotropic filtering.");
         else
             ImGui::TextDisabled("Anisotropic filtering changes require a game restart.");
-        if (s.sixty_fps != s.startup_sixty_fps)
-            ImGui::TextWrapped("%s", s.sixty_fps ? "Restart the game to run it at 60 FPS (experimental)."
-                                                 : "Restart the game to return to its original 30 FPS.");
         if (const char* problem = s.sixty_fps_problem)
             ImGui::TextWrapped("60 FPS could not start this launch (%s); running at the original 30.", problem);
         if (!s.fsr4_supported) ImGui::TextWrapped("FSR 4 v07 requires GPU features unavailable on this device. FSR 3.1 remains available.");
@@ -517,9 +520,9 @@ void PerformanceTab() {
         static const char* const fps_labels[] = {"30", "60", "120", "240", "Unlimited"};
         ChoiceRow("Frame rate limit", s.fps_limit, fps_labels, G::FpsLimits.data(), int(G::FpsLimits.size()),
                   "Caps the frame rate. The engine frame rate (below) is the highest it can go.");
-        // Valkyria runs at its original 30 unless this launch started the 60 FPS option.
+        // Valkyria runs at its original 30 unless the menu has the engine frame rate at 60.
         const int engine_fps = !s.valkyria ? s.applied_engine_fps.load()
-                               : s.startup_sixty_fps && !s.sixty_fps_problem ? 60 : 30;
+                               : Ps4RtSettings::SixtyFpsLive() && s.sixty_fps ? 60 : 30;
         const int effective = G::EffectiveFps(s.fps_limit, engine_fps);
         if (s.fps_limit == 0 || effective < s.fps_limit) {
             char text[48];
@@ -619,7 +622,7 @@ int RestartChanges() {
     const auto& s = Ps4RtSettings::Get();
     return (s.render_resolution != s.startup_render_resolution) + (s.engine_fps != s.startup_engine_fps) +
            (s.deferred_readback != s.startup_deferred_readback) + (s.stale_readback != s.startup_stale_readback) +
-           (s.anisotropy != s.startup_anisotropy) + (s.sixty_fps != s.startup_sixty_fps);
+           (s.anisotropy != s.startup_anisotropy);
 }
 
 // Render game art only within the settings window, below all its controls.
@@ -1506,6 +1509,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
     }
     ConfirmRestart();
+    // Valkyria: the engine frame rate of the menu, at once (and as soon as the game has made
+    // its clock).
+    if (Ps4RtSettings::SixtyFpsLive())
+        ValkyriaFrameRate::SetRate(ValkyriaWidePatches::GuestBase, Ps4RtSettings::Get().sixty_fps);
     if (!Visible()) {
         return;
     }
