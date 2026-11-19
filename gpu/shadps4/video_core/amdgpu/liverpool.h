@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <memory>
 #include <cstdlib>
 
 #include <condition_variable>
@@ -220,7 +221,9 @@ private:
 
     using CmdBuffer = std::pair<std::span<const u32>, std::span<const u32>>;
     CmdBuffer CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb);
-    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq);
+    /// `keep` owns the memory `dcb` and `ccb` point into, when that is a snapshot (SubmitGfx).
+    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq,
+                         std::shared_ptr<const void> keep = {});
     Task ProcessCeUpdate(std::span<const u32> ccb);
     template <bool is_indirect = false>
     Task ProcessCompute(std::span<const u32> acb, u32 vqid);

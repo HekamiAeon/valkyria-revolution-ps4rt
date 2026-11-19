@@ -707,7 +707,7 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
 } // namespace
 
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb,
-                                           u64 seq) {
+                                           u64 seq, std::shared_ptr<const void> keep) {
     FIBER_ENTER(dcb_task_name);
     // Top-level buffers enqueued for the draw preparation workers (nested IBs are not).
     Vulkan::DrawPreparation* draw_prep =
@@ -1684,6 +1684,27 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     // the GPU thread needs to pick up work.
     auto* draw_prep = rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
     auto prep_submission = draw_prep ? draw_prep->Build(dcb) : nullptr;
+    // ps4rt: the GPU thread reads the commands as they are now, from a snapshot, not from the
+    // game's memory when it gets to them. A game may write its next commands over a buffer
+    // it has submitted (Valkyria does between screens and while a save loads); the later the
+    // GPU thread reads, the likelier it meets them half written: packets running past the
+    // end of the submission, or a zero header, which stops the game. Seen once per launch on
+    // a fast GPU and several times a minute on an integrated one. The draw preparation
+    // workers' copy is that snapshot when there is one; nested buffers are still read in place.
+    struct Snapshot {
+        std::shared_ptr<const void> prepared;
+        std::vector<u32> dcb, ccb;
+    };
+    auto snapshot = std::make_shared<Snapshot>();
+    if (prep_submission) {
+        snapshot->prepared = prep_submission;
+        dcb = prep_submission->commands;
+    } else {
+        snapshot->dcb.assign(dcb.begin(), dcb.end());
+        dcb = snapshot->dcb;
+    }
+    snapshot->ccb.assign(ccb.begin(), ccb.end());
+    ccb = snapshot->ccb;
     {
         // Numbering, enqueueing and queueing under one lock keep the three orders identical.
         std::scoped_lock lock{queue.m_access};
@@ -1692,7 +1713,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
             seq = gfx_submit_seq++;
             draw_prep->Enqueue(seq, std::move(prep_submission));
         }
-        auto task = ProcessGraphics(dcb, ccb, seq);
+        auto task = ProcessGraphics(dcb, ccb, seq, std::move(snapshot));
         queue.submits.emplace(task.handle);
     }
 
